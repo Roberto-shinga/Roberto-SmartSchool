@@ -52,7 +52,7 @@ $flash = getFlash();
   <link rel="stylesheet" href="<?= ASSETS_URL ?>/css/variables.css">
   <link rel="stylesheet" href="<?= ASSETS_URL ?>/css/main.css">
   <link rel="stylesheet" href="<?= ASSETS_URL ?>/css/components.css">
-
+  
   <style>
     body {
       background: var(--bg-body);
