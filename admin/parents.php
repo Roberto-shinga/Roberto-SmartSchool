@@ -6,7 +6,7 @@
 
 require_once 'C:/xampp/htdocs/SmartSchool/bootstrap.php';
 
-// Sécurité : Vérifier si l'utilisateur est connecté et admin (rôles 1 et 2 dans votre SQL)
+// Sécurité : Vérifier si l'utilisateur est connecté et admin
 if (!isLoggedIn() || !in_array(currentRole(), ['super_admin', 'admin', 1, 2])) {
     redirectWith(BASE_URL . '/auth/login.php', 'error', 'Accès refusé. Vous devez être administrateur.');
 }
@@ -14,14 +14,12 @@ if (!isLoggedIn() || !in_array(currentRole(), ['super_admin', 'admin', 1, 2])) {
 // Traitement de la suppression d'un compte parent
 if (isset($_GET['delete_id'])) {
     $deleteId = (int)$_GET['delete_id'];
-    
-    // Suppression sécurisée (la clé étrangère fk_users_role empêchera de supprimer un non-parent par erreur)
     dbExecute("DELETE FROM users WHERE id = ? AND role_id = (SELECT id FROM roles WHERE name = 'parent' LIMIT 1)", [$deleteId]);
     logActivity('parent_deleted', 'Suppression du compte parent ID : ' . $deleteId);
     redirectWith(BASE_URL . '/admin/parents.php', 'success', 'Le compte parent a été supprimé avec succès.');
 }
 
-// Récupération de tous les parents et des enfants associés (en se basant sur votre table parent_student)
+// Récupération de tous les parents et des enfants associés (basé sur parent_student)
 $parents = dbFetchAll(
     "SELECT u.*, 
             GROUP_CONCAT(CONCAT(stud_u.first_name, ' ', stud_u.last_name) SEPARATOR ', ') AS enfants
@@ -116,7 +114,10 @@ $flash = getFlash();
       border: 1px solid var(--border);
       color: var(--text-primary);
     }
-    .btn-secondary:hover { border-color: var(--primary); color: var(--primary); }
+    .btn-secondary:hover { 
+      border-color: var(--primary); 
+      color: var(--primary); 
+    }
 
     .btn-primary {
       background: var(--grad-primary);
@@ -126,7 +127,7 @@ $flash = getFlash();
     }
     .btn-primary:hover { filter: brightness(1.08); }
 
-    /* Table Design */
+    /* Card & Table supportant le Light/Dark mode via les variables */
     .parent-card {
       background: var(--bg-card);
       border: 1px solid var(--border);
@@ -145,11 +146,11 @@ $flash = getFlash();
     }
 
     .parent-table th {
-      background: var(--bg-body);
+      background: var(--bg-card); /* S'adapte au mode sombre */
       padding: 16px;
       font-weight: 700;
       color: var(--text-muted);
-      border-bottom: 1px solid var(--border);
+      border-bottom: 2px solid var(--border);
       text-transform: uppercase;
       font-size: 11px;
       letter-spacing: 0.05em;
@@ -160,6 +161,10 @@ $flash = getFlash();
       border-bottom: 1px solid var(--border);
       color: var(--text-primary);
       vertical-align: middle;
+    }
+
+    .parent-table tr:last-child td {
+      border-bottom: none;
     }
 
     .parent-name {
@@ -179,7 +184,7 @@ $flash = getFlash();
     }
 
     .child-badge {
-      background: var(--primary-bg);
+      background: var(--primary-bg); /* Utilise la couleur d'accent atténuée */
       color: var(--primary);
       padding: 4px 10px;
       border-radius: 99px;
@@ -215,13 +220,13 @@ $flash = getFlash();
       justify-content: center;
       border-radius: 6px;
       border: 1px solid var(--border);
-      background: var(--bg-card);
+      background: var(--bg-body);
       color: var(--text-muted);
       text-decoration: none;
       transition: all 0.2s;
     }
     .btn-icon:hover { color: var(--primary); border-color: var(--primary); }
-    .btn-delete:hover { color: #dc2626; border-color: #dc2626; background: rgba(220, 38, 38, 0.05); }
+    .btn-delete:hover { color: #dc2626; border-color: #dc2626; background: rgba(220, 38, 38, 0.10); }
 
   </style>
 </head>
@@ -229,6 +234,7 @@ $flash = getFlash();
 
 <div class="container">
   
+  <!-- Flash message -->
   <?php if ($flash): ?>
     <div class="alert alert-<?= clean($flash['type']) ?>" style="margin-bottom: 20px;">
       <i class="bx bx-<?= $flash['type'] === 'success' ? 'check-circle' : 'error' ?>"></i>
@@ -236,6 +242,7 @@ $flash = getFlash();
     </div>
   <?php endif; ?>
 
+  <!-- Header -->
   <div class="page-header">
     <h1 class="page-title">
       <i class="bx bx-group"></i>
@@ -251,6 +258,7 @@ $flash = getFlash();
     </div>
   </div>
 
+  <!-- Main Table Card -->
   <div class="parent-card">
     <div class="table-responsive">
       <table class="parent-table">
@@ -273,11 +281,13 @@ $flash = getFlash();
           <?php else: ?>
             <?php foreach ($parents as $parent): ?>
               <tr>
+                <!-- Nom complet -->
                 <td>
                   <div class="parent-name"><?= clean($parent['last_name'] . ' ' . $parent['first_name']) ?></div>
                   <div class="parent-meta">Utilisateur : @<?= clean($parent['username']) ?></div>
                 </td>
                 
+                <!-- Contacts -->
                 <td>
                   <div style="display:flex; flex-direction:column; gap:2px;">
                     <span><i class="bx bx-envelope" style="color:var(--text-muted)"></i> <?= clean($parent['email']) ?></span>
@@ -287,6 +297,7 @@ $flash = getFlash();
                   </div>
                 </td>
                 
+                <!-- Enfants reliés -->
                 <td>
                   <div class="children-tags">
                     <?php if (!empty($parent['enfants'])): 
@@ -300,12 +311,14 @@ $flash = getFlash();
                   </div>
                 </td>
                 
+                <!-- Statut du compte -->
                 <td>
                   <span class="status-badge <?= $parent['is_active'] == 1 ? 'status-active' : 'status-inactive' ?>">
                     <i class="bx bx-circle"></i> <?= $parent['is_active'] == 1 ? 'Actif' : 'Inactif' ?>
                   </span>
                 </td>
                 
+                <!-- Boutons d'actions -->
                 <td style="text-align: right;">
                   <div class="row-actions" style="justify-content: flex-end;">
                     <a href="<?= BASE_URL ?>/admin/parents-edit.php?id=<?= $parent['id'] ?>" class="btn-icon" title="Modifier">
