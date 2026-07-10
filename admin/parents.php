@@ -6,32 +6,31 @@
 
 require_once 'C:/xampp/htdocs/SmartSchool/bootstrap.php';
 
-// Sécurité : Vérifier si l'utilisateur est connecté et admin
-if (!isLoggedIn() || !in_array(currentRole(), ['superadmin', 'admin', 1, 2])) {
+// Sécurité : Vérifier si l'utilisateur est connecté et admin (rôles 1 et 2 dans votre SQL)
+if (!isLoggedIn() || !in_array(currentRole(), ['super_admin', 'admin', 1, 2])) {
     redirectWith(BASE_URL . '/auth/login.php', 'error', 'Accès refusé. Vous devez être administrateur.');
 }
 
-// Traitement de la suppression (si demandée)
+// Traitement de la suppression d'un compte parent
 if (isset($_GET['delete_id'])) {
-    verifyCsrf(); // Optionnel : si passé via un lien sécurisé, sinon via formulaire POST
     $deleteId = (int)$_GET['delete_id'];
     
-    // On désactive ou supprime le parent (ici on le supprime, ou met is_active = 0 selon votre logique)
+    // Suppression sécurisée (la clé étrangère fk_users_role empêchera de supprimer un non-parent par erreur)
     dbExecute("DELETE FROM users WHERE id = ? AND role_id = (SELECT id FROM roles WHERE name = 'parent' LIMIT 1)", [$deleteId]);
     logActivity('parent_deleted', 'Suppression du compte parent ID : ' . $deleteId);
     redirectWith(BASE_URL . '/admin/parents.php', 'success', 'Le compte parent a été supprimé avec succès.');
 }
 
-// Récupération de tous les parents et des élèves associés
-// Note : Cette requête utilise GROUP_CONCAT pour lister les enfants liés via une table de liaison (ex: student_parent)
+// Récupération de tous les parents et des enfants associés (en se basant sur votre table parent_student)
 $parents = dbFetchAll(
     "SELECT u.*, 
-            GROUP_CONCAT(CONCAT(s.first_name, ' ', s.last_name) SEPARATOR ', ') AS enfants
+            GROUP_CONCAT(CONCAT(stud_u.first_name, ' ', stud_u.last_name) SEPARATOR ', ') AS enfants
      FROM users u
-     LEFT JOIN roles r ON u.role_id = r.id
-     LEFT JOIN student_parent sp ON u.id = sp.parent_id
-     LEFT JOIN users s ON sp.student_id = s.id
-     WHERE r.name = 'parent' OR u.role_id = 5
+     JOIN roles r ON u.role_id = r.id
+     LEFT JOIN parent_student ps ON u.id = ps.parent_id
+     LEFT JOIN students s ON ps.student_id = s.id
+     LEFT JOIN users stud_u ON s.user_id = stud_u.id
+     WHERE r.name = 'parent'
      GROUP BY u.id
      ORDER BY u.last_name ASC, u.first_name ASC"
 );
@@ -127,7 +126,7 @@ $flash = getFlash();
     }
     .btn-primary:hover { filter: brightness(1.08); }
 
-    /* Table & Cards */
+    /* Table Design */
     .parent-card {
       background: var(--bg-card);
       border: 1px solid var(--border);
@@ -268,7 +267,7 @@ $flash = getFlash();
           <?php if (empty($parents)): ?>
             <tr>
               <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 32px;">
-                Aucun parent enregistré pour le moment.
+                Aucun parent enregistré dans la base de données.
               </td>
             </tr>
           <?php else: ?>
