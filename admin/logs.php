@@ -7,7 +7,6 @@
 require_once 'C:/xampp/htdocs/SmartSchool/bootstrap.php';
 
 // Sécurité : Vérifier si l'utilisateur est connecté et s'il a le droit d'accès
-// (Adaptez cette condition selon vos fonctions, par exemple si seuls les rôles 1 et 2 y ont accès)
 if (!isLoggedIn() || !in_array(currentRole(), ['superadmin', 'admin', 1, 2])) {
     redirectWith(BASE_URL . '/auth/login.php', 'error', 'Accès refusé. Vous devez être administrateur.');
 }
@@ -18,7 +17,6 @@ $perPage = 25; // Nombre de lignes par page
 $offset = ($page - 1) * $perPage;
 
 // Récupération des logs depuis la base de données
-// Note : Ajustez les noms des colonnes (id, action, description, user_id, created_at) selon votre table
 $logs = dbFetchAll(
     "SELECT l.*, u.username, u.first_name, u.last_name, r.name AS role_name
      FROM activity_logs l
@@ -34,6 +32,9 @@ $totalLogs = dbFetchOne("SELECT COUNT(*) AS total FROM activity_logs")['total'] 
 $totalPages = ceil($totalLogs / $perPage);
 
 $schoolName = getSetting('school_name', APP_NAME);
+
+// Détermination dynamique du tableau de bord selon le rôle de l'utilisateur
+$dashboardUrl = ROLE_REDIRECTS[currentRole()] ?? BASE_URL;
 ?>
 <!DOCTYPE html>
 <html lang="fr" class="<?= themeClass() ?>">
@@ -44,7 +45,7 @@ $schoolName = getSetting('school_name', APP_NAME);
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2 family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
 
   <link rel="stylesheet" href="<?= ASSETS_URL ?>/css/variables.css">
@@ -226,7 +227,7 @@ $schoolName = getSetting('school_name', APP_NAME);
       <i class="bx bx-history"></i>
       Journal des activités
     </h1>
-    <a href="<?= BASE_URL . '/admin/index.php' ?>" class="btn-back">
+    <a href="<?= $dashboardUrl ?>" class="btn-back">
       <i class="bx bx-arrow-back"></i> Retour au tableau de bord
     </a>
   </div>
@@ -251,7 +252,6 @@ $schoolName = getSetting('school_name', APP_NAME);
             </tr>
           <?php else: ?>
             <?php foreach ($logs as $log): 
-              // Détermination de la classe CSS du badge selon le type d'action
               $actionClass = 'action-default';
               if ($log['action'] === 'login') $actionClass = 'action-login';
               if ($log['action'] === 'login_failed') $actionClass = 'action-login_failed';
@@ -304,7 +304,7 @@ $schoolName = getSetting('school_name', APP_NAME);
           </a>
         <?php endfor; ?>
 
-        <a href="?p=<?= $i ?>" class="page-link <?= $page >= $totalPages ? 'disabled' : '' ?>">
+        <a href="?p=<?= $page + 1 ?>" class="page-link <?= $page >= $totalPages ? 'disabled' : '' ?>">
           <i class="bx bx-chevron-right"></i>
         </a>
       </div>
