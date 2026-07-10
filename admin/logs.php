@@ -226,7 +226,7 @@ $schoolName = getSetting('school_name', APP_NAME);
       <i class="bx bx-history"></i>
       Journal des activités
     </h1>
-    <a href="<?= BASE_URL ?>" class="btn-back">
+    <a href="<?= BASE_URL . '/admin/index.php' ?>" class="btn-back">
       <i class="bx bx-arrow-back"></i> Retour au tableau de bord
     </a>
   </div>
