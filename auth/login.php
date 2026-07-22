@@ -1,629 +1,297 @@
 <?php
-// ============================================================
-//  SmartSchool — Page de connexion
-//  Emplacement : auth/login.php
-// ============================================================
-
 require_once 'C:/xampp/htdocs/SmartSchool/bootstrap.php';
 
-// Deja connecte ? Rediriger vers son dashboard
-if (isLoggedIn()) {
-    redirect(ROLE_REDIRECTS[currentRole()] ?? BASE_URL);
-}
+if (isLoggedIn()) redirect(ROLE_REDIRECTS[currentRole()] ?? BASE_URL);
 
-$error = '';
+$error  = '';
+$tab    = trim($_GET['tab'] ?? 'email');
 
-// Traitement du formulaire
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCsrf();
-
-    $login    = trim($_POST['login']    ?? '');
+    $tab      = trim($_POST['tab']      ?? 'email');
     $password = trim($_POST['password'] ?? '');
-    $remember = isset($_POST['remember']);
 
-    if (empty($login) || empty($password)) {
-        $error = 'Veuillez remplir tous les champs.';
-    } else {
-        $user = dbFetchOne(
-            "SELECT u.*, r.name AS role_name
-             FROM users u
-             JOIN roles r ON u.role_id = r.id
-             WHERE (u.email = ? OR u.username = ?)
-             AND u.is_active = 1
-             LIMIT 1",
-            [$login, $login]
-        );
-
-        if (!$user || !verifyPassword($password, $user['password'])) {
-            $error = 'Identifiants incorrects. Veuillez reessayer.';
-            logActivity('login_failed', 'Tentative echouee : ' . $login);
+    // ── Connexion EMAIL ──────────────────────────────────
+    if ($tab === 'email') {
+        $login = trim($_POST['login'] ?? '');
+        if (empty($login) || empty($password)) {
+            $error = 'Veuillez remplir tous les champs.';
         } else {
-            loginUser($user);
-
-            if ($remember) {
-                setcookie(
-                    'ss_remember',
-                    generateToken(),
-                    time() + (REMEMBER_DAYS * 86400),
-                    '/', '', false, true
-                );
+            $user = dbFetchOne(
+                "SELECT u.*, r.name AS role_name FROM users u
+                 JOIN roles r ON u.role_id = r.id
+                 WHERE (u.email=? OR u.username=?) AND u.is_active=1 LIMIT 1",
+                [$login, $login]
+            );
+            if (!$user || !verifyPassword($password, $user['password'])) {
+                $error = 'Identifiants incorrects.';
+                logActivity('login_failed', 'Echec email : ' . $login);
+            } else {
+                loginUser($user);
+                if (!empty($_POST['remember'])) {
+                    setcookie('ss_remember', generateToken(), time() + REMEMBER_DAYS * 86400, '/', '', false, true);
+                }
+                if ($user['must_change_password']) {
+                    $_SESSION['force_pwd_change'] = true;
+                    redirectWith(BASE_URL . '/auth/change-password.php', 'warning',
+                        'Veuillez definir votre mot de passe personnel avant de continuer.');
+                }
+                redirectWith(ROLE_REDIRECTS[$user['role_id']] ?? BASE_URL, 'success',
+                    'Bienvenue ' . $user['first_name'] . ' !');
             }
+        }
+    }
 
-            $dest = ROLE_REDIRECTS[$user['role_id']] ?? BASE_URL;
-            redirectWith($dest, 'success', 'Bienvenue ' . $user['first_name'] . ' !');
+    // ── Connexion MATRICULE (eleves 7e+) ─────────────────
+    if ($tab === 'matricule') {
+        $matricule = strtoupper(trim($_POST['matricule'] ?? ''));
+        if (empty($matricule) || empty($password)) {
+            $error = 'Matricule et mot de passe obligatoires.';
+        } else {
+            $student = dbFetchOne(
+                "SELECT s.id AS student_id, s.first_login, u.id, u.first_name, u.last_name,
+                        u.password, u.role_id, u.is_active, u.must_change_password
+                 FROM students s
+                 JOIN users u ON s.user_id = u.id
+                 WHERE s.student_number=? AND s.has_account=1 AND u.is_active=1 LIMIT 1",
+                [$matricule]
+            );
+            if (!$student || !verifyPassword($password, $student['password'])) {
+                $error = 'Matricule ou mot de passe incorrect.';
+                logActivity('login_failed', 'Echec matricule : ' . $matricule);
+            } else {
+                $userRow = dbFetchOne("SELECT u.*, r.name AS role_name FROM users u JOIN roles r ON u.role_id=r.id WHERE u.id=?", [$student['id']]);
+                loginUser($userRow);
+                if (!empty($_POST['remember'])) {
+                    setcookie('ss_remember', generateToken(), time() + REMEMBER_DAYS * 86400, '/', '', false, true);
+                }
+                // Premiere connexion
+                if ($student['first_login'] || $student['must_change_password']) {
+                    dbExecute("UPDATE students SET first_login=0 WHERE id=?", [$student['student_id']]);
+                    $_SESSION['force_pwd_change'] = true;
+                    redirectWith(BASE_URL . '/auth/change-password.php', 'info',
+                        'Premiere connexion : definissez votre mot de passe personnel.');
+                }
+                redirectWith(BASE_URL . '/students/index.php', 'success',
+                    'Bienvenue ' . $student['first_name'] . ' !');
+            }
         }
     }
 }
 
-$schoolName = getSetting('school_name', APP_NAME);
-$flash      = getFlash();
+$schoolName  = getSetting('school_name', APP_NAME);
+$flash       = getFlash();
+$googleUrl   = buildGoogleAuthUrl();
+$nbStudents  = dbFetchOne("SELECT COUNT(*) c FROM students WHERE status='actif'")['c'] ?? 0;
+$nbTeachers  = dbFetchOne("SELECT COUNT(*) c FROM teachers WHERE status='actif'")['c'] ?? 0;
 ?>
 <!DOCTYPE html>
 <html lang="fr" class="<?= themeClass() ?>">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Connexion — <?= clean($schoolName) ?></title>
-
-  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-  <!-- Boxicons -->
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
-
-  <!-- CSS -->
   <link rel="stylesheet" href="<?= ASSETS_URL ?>/css/variables.css">
   <link rel="stylesheet" href="<?= ASSETS_URL ?>/css/main.css">
   <link rel="stylesheet" href="<?= ASSETS_URL ?>/css/components.css">
-
   <style>
-    /* ── Layout login deux colonnes ── */
-    body {
-      min-height : 100vh;
-      display    : flex;
-      background : var(--bg-body);
-    }
-
-    .login-page {
-      display   : flex;
-      width     : 100%;
-      min-height: 100vh;
-    }
-
-    /* ── Colonne gauche : image + texte ── */
-    .login-left {
-      flex      : 1;
-      position  : relative;
-      overflow  : hidden;
-      display   : none;
-    }
-    @media (min-width: 960px) { .login-left { display: block; } }
-
-    .login-left img {
-      width     : 100%;
-      height    : 100%;
-      object-fit: cover;
-      display   : block;
-    }
-
-    .login-left-overlay {
-      position      : absolute;
-      inset         : 0;
-      background    : linear-gradient(
-        155deg,
-        rgba(79, 70, 229, 0.92) 0%,
-        rgba(99, 102, 241, 0.80) 40%,
-        rgba(139, 92, 246, 0.72) 100%
-      );
-      display        : flex;
-      flex-direction : column;
-      justify-content: space-between;
-      padding        : 40px;
-    }
-
-    .login-brand {
-      display    : flex;
-      align-items: center;
-      gap        : 14px;
-    }
-    .login-brand-icon {
-      width          : 46px;
-      height         : 46px;
-      background     : rgba(255,255,255,0.18);
-      border         : 1px solid rgba(255,255,255,0.30);
-      border-radius  : 12px;
-      display        : flex;
-      align-items    : center;
-      justify-content: center;
-      font-size      : 1.5rem;
-      color          : #fff;
-    }
-    .login-brand-name { font-size: 1.4rem; font-weight: 800; color: #fff; }
-    .login-brand-sub  { font-size: 0.78rem; color: rgba(255,255,255,0.72); margin-top: 2px; }
-
-    .login-hero { color: #fff; }
-    .login-hero h2 {
-      font-size    : 2rem;
-      font-weight  : 800;
-      line-height  : 1.3;
-      margin-bottom: 14px;
-      color        : #fff;
-    }
-    .login-hero p {
-      font-size  : 0.95rem;
-      color      : rgba(255,255,255,0.80);
-      line-height: 1.7;
-      max-width  : 380px;
-    }
-
-    .login-stats {
-      display  : flex;
-      gap      : 32px;
-      margin-top: 32px;
-    }
-    .login-stat-value { font-size: 1.8rem; font-weight: 800; color: #fff; line-height: 1; }
-    .login-stat-label { font-size: 0.75rem; color: rgba(255,255,255,0.70); margin-top: 4px; }
-
-    /* Badges roles sur le panneau gauche */
-    .login-roles {
-      display  : flex;
-      flex-wrap: wrap;
-      gap      : 8px;
-      margin-top: 28px;
-    }
-    .login-role-chip {
-      display    : flex;
-      align-items: center;
-      gap        : 6px;
-      padding    : 6px 12px;
-      background : rgba(255,255,255,0.14);
-      border     : 1px solid rgba(255,255,255,0.22);
-      border-radius: 99px;
-      font-size  : 12px;
-      font-weight: 600;
-      color      : #fff;
-    }
-
-    .login-left-footer {
-      font-size: 12px;
-      color    : rgba(255,255,255,0.50);
-    }
-
-    /* ── Colonne droite : formulaire ── */
-    .login-right {
-      width          : 100%;
-      max-width      : 480px;
-      background     : var(--bg-card);
-      display        : flex;
-      flex-direction : column;
-      justify-content: center;
-      padding        : 40px 44px;
-      overflow-y     : auto;
-      min-height     : 100vh;
-    }
-    @media (max-width: 960px) { .login-right { max-width: 100%; padding: 32px 24px; } }
-    @media (max-width: 480px) { .login-right { padding: 24px 18px; } }
-
-    /* Brand visible uniquement sur mobile */
-    .mobile-brand {
-      display      : flex;
-      align-items  : center;
-      gap          : 12px;
-      margin-bottom: 32px;
-    }
-    @media (min-width: 960px) { .mobile-brand { display: none; } }
-
-    .mobile-brand-icon {
-      width          : 40px;
-      height         : 40px;
-      background     : var(--grad-primary);
-      border-radius  : 10px;
-      display        : flex;
-      align-items    : center;
-      justify-content: center;
-      color          : #fff;
-      font-size      : 1.2rem;
-      box-shadow     : var(--shadow-primary);
-    }
-    .mobile-brand-name { font-size: 1.2rem; font-weight: 800; color: var(--primary); }
-
-    .login-title {
-      font-size    : 1.65rem;
-      font-weight  : 800;
-      color        : var(--text-primary);
-      margin-bottom: 6px;
-    }
-    .login-subtitle {
-      font-size    : 13.5px;
-      color        : var(--text-muted);
-      margin-bottom: 28px;
-    }
-
-    /* Comptes demo */
-    .demo-section {
-      background   : var(--bg-body);
-      border       : 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding      : 16px;
-      margin-bottom: 24px;
-    }
-    body.dark-mode .demo-section { background: rgba(99,102,241,0.06); }
-
-    .demo-title {
-      font-size     : 11px;
-      font-weight   : 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color         : var(--text-muted);
-      margin-bottom : 12px;
-      display       : flex;
-      align-items   : center;
-      gap           : 6px;
-    }
-
-    .demo-grid {
-      display              : grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap                  : 7px;
-    }
-    @media (max-width: 380px) { .demo-grid { grid-template-columns: 1fr; } }
-
-    .demo-btn {
-      display      : flex;
-      align-items  : center;
-      gap          : 9px;
-      padding      : 8px 10px;
-      background   : var(--bg-card);
-      border       : 1px solid var(--border);
-      border-radius: var(--radius);
-      cursor       : pointer;
-      transition   : all var(--transition);
-      text-align   : left;
-      width        : 100%;
-    }
-    body.dark-mode .demo-btn { background: rgba(255,255,255,0.04); }
-    .demo-btn:hover { border-color: var(--primary); background: var(--primary-bg); }
-
-    .demo-btn-icon {
-      width          : 30px;
-      height         : 30px;
-      border-radius  : var(--radius-sm);
-      display        : flex;
-      align-items    : center;
-      justify-content: center;
-      font-size      : 0.95rem;
-      color          : #fff;
-      flex-shrink    : 0;
-    }
-    .demo-btn-name  { font-size: 12px; font-weight: 700; color: var(--text-primary); display: block; line-height: 1.2; }
-    .demo-btn-email { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
-
-    /* Separateur */
-    .or-divider {
-      display    : flex;
-      align-items: center;
-      gap        : 12px;
-      font-size  : 12px;
-      color      : var(--text-muted);
-      margin     : 20px 0;
-    }
-    .or-divider::before,
-    .or-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-
-    /* Lien mot de passe */
-    .forgot-link {
-      font-size : 12.5px;
-      color     : var(--primary);
-      font-weight: 600;
-    }
-    .forgot-link:hover { text-decoration: underline; }
-
-    /* Bouton connexion */
-    .btn-login {
-      width          : 100%;
-      padding        : 12px;
-      background     : var(--grad-primary);
-      color          : #fff;
-      border         : none;
-      border-radius  : var(--radius);
-      font-size      : 15px;
-      font-weight    : 700;
-      font-family    : var(--font);
-      cursor         : pointer;
-      display        : flex;
-      align-items    : center;
-      justify-content: center;
-      gap            : 9px;
-      box-shadow     : var(--shadow-primary);
-      transition     : all var(--transition-md);
-      margin-top     : 6px;
-    }
-    .btn-login:hover    { filter: brightness(1.07); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(99,102,241,0.42); }
-    .btn-login:active   { transform: translateY(0); }
-    .btn-login:disabled { opacity: 0.75; cursor: not-allowed; transform: none; }
-
-    /* Pied formulaire */
-    .login-footer {
-      text-align: center;
-      margin-top: 28px;
-      font-size : 12px;
-      color     : var(--text-muted);
-    }
-    .login-footer p + p { margin-top: 5px; }
-    .login-footer strong { color: var(--primary); }
-
-    /* Bouton dark mode */
-    .dark-btn {
-      position       : fixed;
-      top            : 16px;
-      right          : 16px;
-      width          : 38px;
-      height         : 38px;
-      border-radius  : 50%;
-      background     : var(--bg-card);
-      border         : 1px solid var(--border);
-      display        : flex;
-      align-items    : center;
-      justify-content: center;
-      color          : var(--text-muted);
-      font-size      : 1.1rem;
-      cursor         : pointer;
-      box-shadow     : var(--shadow-sm);
-      transition     : all var(--transition);
-      z-index        : 999;
-    }
-    .dark-btn:hover { color: var(--primary); border-color: var(--primary); }
+    body{min-height:100vh;display:flex;background:var(--bg-body);}
+    .auth-page{display:flex;width:100%;min-height:100vh;}
+    .auth-left{flex:1;display:none;position:relative;overflow:hidden;}
+    @media(min-width:960px){.auth-left{display:block;}}
+    .auth-img{width:100%;height:100%;object-fit:cover;display:block;}
+    .auth-overlay{position:absolute;inset:0;background:linear-gradient(155deg,rgba(79,70,229,0.92),rgba(99,102,241,0.80),rgba(139,92,246,0.75));display:flex;flex-direction:column;justify-content:space-between;padding:44px;}
+    .bubble{position:absolute;border-radius:50%;background:rgba(255,255,255,0.07);}
+    .b1{width:220px;height:220px;top:-60px;right:-60px;animation:float 7s ease-in-out infinite;}
+    .b2{width:140px;height:140px;bottom:100px;left:20px;animation:float 7s 2.5s ease-in-out infinite;}
+    .b3{width:90px;height:90px;top:38%;right:80px;animation:float 7s 5s ease-in-out infinite;}
+    @keyframes float{0%,100%{transform:translateY(0);}50%{transform:translateY(-18px);}}
+    .a-brand{display:flex;align-items:center;gap:16px;position:relative;z-index:1;}
+    .a-brand-icon{width:52px;height:52px;background:rgba(255,255,255,0.18);border:1.5px solid rgba(255,255,255,0.28);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;color:#fff;}
+    .a-brand-name{font-size:1.5rem;font-weight:800;color:#fff;}
+    .a-brand-sub{font-size:0.73rem;color:rgba(255,255,255,0.64);}
+    .a-hero{position:relative;z-index:1;}
+    .a-hero h2{font-size:2.3rem;font-weight:800;color:#fff;line-height:1.25;margin-bottom:14px;}
+    .a-hero p{font-size:0.95rem;color:rgba(255,255,255,0.76);line-height:1.7;max-width:380px;margin-bottom:22px;}
+    .a-stats{display:flex;gap:32px;}
+    .a-stat-v{font-size:1.9rem;font-weight:800;color:#fff;line-height:1;}
+    .a-stat-l{font-size:0.72rem;color:rgba(255,255,255,0.64);margin-top:3px;}
+    .a-foot{font-size:12px;color:rgba(255,255,255,0.40);position:relative;z-index:1;}
+    .auth-right{width:100%;max-width:490px;background:var(--bg-card);display:flex;flex-direction:column;justify-content:center;padding:44px 50px;overflow-y:auto;min-height:100vh;}
+    @media(max-width:960px){.auth-right{max-width:100%;padding:32px 24px;}}
+    @media(max-width:480px){.auth-right{padding:24px 16px;}}
+    .m-brand{display:flex;align-items:center;gap:12px;margin-bottom:28px;}
+    @media(min-width:960px){.m-brand{display:none;}}
+    .m-brand-icon{width:42px;height:42px;background:var(--grad-primary);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.2rem;box-shadow:var(--shadow-primary);}
+    .btn-google{width:100%;padding:11px 16px;background:var(--bg-card);color:var(--text-primary);border:1.5px solid var(--border);border-radius:var(--radius);font-size:14px;font-weight:600;font-family:var(--font);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;transition:all var(--transition);box-shadow:var(--shadow-sm);text-decoration:none;}
+    .btn-google:hover{border-color:#4285F4;box-shadow:0 4px 14px rgba(66,133,244,0.18);transform:translateY(-1px);}
+    .divider{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--text-muted);margin:16px 0;}
+    .divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--border);}
+    .login-tabs{display:flex;border-bottom:2px solid var(--border-light);margin-bottom:22px;}
+    .ltab{flex:1;padding:10px;text-align:center;font-size:13px;font-weight:600;color:var(--text-muted);border-bottom:2px solid transparent;margin-bottom:-2px;cursor:pointer;transition:all var(--transition);background:none;font-family:var(--font);}
+    .ltab:hover{color:var(--primary);}
+    .ltab.active{color:var(--primary);border-bottom-color:var(--primary);}
+    .ltab i{margin-right:5px;}
+    .btn-auth{width:100%;padding:13px;background:var(--grad-primary);color:#fff;border:none;border-radius:var(--radius);font-size:15px;font-weight:700;font-family:var(--font);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;box-shadow:var(--shadow-primary);transition:all var(--transition-md);}
+    .btn-auth:hover{filter:brightness(1.07);transform:translateY(-1px);}
+    .btn-auth:disabled{opacity:0.75;cursor:not-allowed;transform:none;}
+    .hint-box{background:var(--primary-bg);border:1px solid rgba(79,70,229,0.25);border-radius:var(--radius);padding:12px 14px;margin-bottom:16px;font-size:12.5px;color:var(--primary-dark);display:flex;align-items:flex-start;gap:9px;}
+    .hint-box i{flex-shrink:0;margin-top:1px;}
+    .dark-btn{position:fixed;top:16px;right:16px;width:36px;height:36px;border-radius:50%;background:var(--bg-card);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:1.1rem;cursor:pointer;z-index:999;box-shadow:var(--shadow-sm);transition:all var(--transition);}
+    .dark-btn:hover{color:var(--primary);border-color:var(--primary);}
+    @keyframes slideUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    .au{animation:slideUp 0.35s ease forwards;}
+    .d1{animation-delay:.05s;opacity:0;} .d2{animation-delay:.10s;opacity:0;} .d3{animation-delay:.15s;opacity:0;}
   </style>
 </head>
-
 <body>
 
-<!-- Bouton dark mode -->
-<button class="dark-btn" id="darkBtn" title="Mode sombre">
-  <i class="bx <?= isDarkMode() ? 'bx-sun' : 'bx-moon' ?>"></i>
-</button>
+<button class="dark-btn" id="darkBtn"><i class="bx <?= isDarkMode()?'bx-sun':'bx-moon' ?>"></i></button>
 
-<div class="login-page">
-
-  <!-- ══ GAUCHE : IMAGE + TEXTE ══ -->
-  <div class="login-left">
-    <img
-      src="https://images.unsplash.com/photo-1523050854058-8df90110c9f1?w=1200&q=80&auto=format&fit=crop"
-      alt=""
-    >
-    <div class="login-left-overlay">
-
-      <!-- Logo -->
-      <div class="login-brand">
-        <div class="login-brand-icon">
-          <i class="bx bx-buildings"></i>
-        </div>
-        <div>
-          <div class="login-brand-name"><?= clean($schoolName) ?></div>
-          <div class="login-brand-sub">Systeme de gestion scolaire</div>
+<div class="auth-page">
+  <!-- GAUCHE -->
+  <div class="auth-left">
+    <?php if (file_exists('C:/xampp/htdocs/SmartSchool/assets/images/school-bg.jpg')): ?>
+      <img class="auth-img" src="<?= ASSETS_URL ?>/images/school-bg.jpg" alt="Ecole">
+    <?php else: ?>
+      <div style="width:100%;height:100%;background:linear-gradient(135deg,#1e1b4b,#4f46e5,#7c3aed)"></div>
+    <?php endif; ?>
+    <div class="auth-overlay">
+      <div class="bubble b1"></div><div class="bubble b2"></div><div class="bubble b3"></div>
+      <div class="a-brand">
+        <div class="a-brand-icon"><i class="bx bx-buildings"></i></div>
+        <div><div class="a-brand-name"><?= clean($schoolName) ?></div><div class="a-brand-sub">Systeme intelligent de gestion scolaire — RDC</div></div>
+      </div>
+      <div class="a-hero">
+        <h2>Bienvenue sur<br><?= clean($schoolName) ?>.</h2>
+        <p>Plateforme complete de gestion scolaire — eleves, notes, presences, finances et apprentissage numerique.</p>
+        <div class="a-stats">
+          <div><div class="a-stat-v"><?= $nbStudents ?></div><div class="a-stat-l">Eleves inscrits</div></div>
+          <div><div class="a-stat-v"><?= $nbTeachers ?></div><div class="a-stat-l">Enseignants</div></div>
+          <div><div class="a-stat-v">6</div><div class="a-stat-l">Roles</div></div>
         </div>
       </div>
-
-      <!-- Texte central -->
-      <div class="login-hero">
-        <h2>Gerez votre ecole<br>en toute simplicite.</h2>
-        <p>
-          Plateforme complete pour administrer eleves, enseignants,
-          notes, presences et finances — en un seul endroit.
-        </p>
-
-        <!-- Stats -->
-        <div class="login-stats">
-          <div>
-            <div class="login-stat-value">500+</div>
-            <div class="login-stat-label">Eleves geres</div>
-          </div>
-          <div>
-            <div class="login-stat-value">6</div>
-            <div class="login-stat-label">Roles securises</div>
-          </div>
-          <div>
-            <div class="login-stat-value">100%</div>
-            <div class="login-stat-label">Responsive</div>
-          </div>
-        </div>
-
-        <!-- Chips roles -->
-        <div class="login-roles">
-          <div class="login-role-chip"><i class="bx bx-shield-alt-2"></i> Super Admin</div>
-          <div class="login-role-chip"><i class="bx bx-user-check"></i> Admin</div>
-          <div class="login-role-chip"><i class="bx bx-chalkboard"></i> Enseignant</div>
-          <div class="login-role-chip"><i class="bx bx-graduation"></i> Eleve</div>
-          <div class="login-role-chip"><i class="bx bx-group"></i> Parent</div>
-          <div class="login-role-chip"><i class="bx bx-calculator"></i> Comptable</div>
-        </div>
-      </div>
-
-      <div class="login-left-footer">
-        &copy; <?= APP_YEAR ?> <?= clean($schoolName) ?> — Tous droits reserves
-      </div>
-
+      <div class="a-foot">&copy; <?= APP_YEAR ?> <?= clean($schoolName) ?></div>
     </div>
   </div>
 
-  <!-- ══ DROITE : FORMULAIRE ══ -->
-  <div class="login-right">
-
-    <!-- Brand mobile -->
-    <div class="mobile-brand">
-      <div class="mobile-brand-icon"><i class="bx bx-buildings"></i></div>
-      <span class="mobile-brand-name"><?= clean($schoolName) ?></span>
+  <!-- DROITE -->
+  <div class="auth-right">
+    <div class="m-brand">
+      <div class="m-brand-icon"><i class="bx bx-buildings"></i></div>
+      <span style="font-size:1.2rem;font-weight:800;color:var(--primary)"><?= clean($schoolName) ?></span>
     </div>
 
-    <h1 class="login-title">Bienvenue !</h1>
-    <p class="login-subtitle">Connectez-vous a votre espace personnel</p>
+    <div class="au"><h1 style="font-size:1.8rem;font-weight:800;color:var(--text-primary);margin-bottom:4px">Connexion</h1>
+    <p style="font-size:13.5px;color:var(--text-muted);margin-bottom:22px">Accedez a votre espace personnel</p></div>
 
-    <!-- Flash message -->
     <?php if ($flash): ?>
-      <div class="alert alert-<?= clean($flash['type']) ?>">
-        <i class="bx bx-<?= $flash['type'] === 'success' ? 'check-circle' : 'error' ?>"></i>
-        <?= clean($flash['message']) ?>
+      <div class="alert alert-<?= clean($flash['type']) ?> au">
+        <i class="bx bx-info-circle"></i> <?= clean($flash['message']) ?>
       </div>
     <?php endif; ?>
-
-    <!-- Erreur -->
     <?php if ($error): ?>
-      <div class="alert alert-danger">
-        <i class="bx bx-x-circle"></i>
-        <?= clean($error) ?>
-      </div>
+      <div class="alert alert-danger au"><i class="bx bx-x-circle"></i> <?= clean($error) ?></div>
     <?php endif; ?>
 
-    <!-- Comptes demo -->
-    <div class="demo-section">
-      <div class="demo-title">
-        <i class="bx bx-info-circle"></i>
-        Comptes de demonstration — cliquez pour remplir
-      </div>
-      <div class="demo-grid">
-        <?php
-        $demos = [
-          ['email'=>'admin@smartschool.fr',     'name'=>'Admin',       'color'=>'#6366f1','icon'=>'bx-user-check'],
-          ['email'=>'martin@smartschool.fr',     'name'=>'Enseignant',  'color'=>'#0891b2','icon'=>'bx-chalkboard'],
-          ['email'=>'eleve@smartschool.fr',      'name'=>'Eleve',       'color'=>'#059669','icon'=>'bx-graduation'],
-          ['email'=>'parent@smartschool.fr',     'name'=>'Parent',      'color'=>'#d97706','icon'=>'bx-group'],
-          ['email'=>'comptable@smartschool.fr',  'name'=>'Comptable',   'color'=>'#dc2626','icon'=>'bx-calculator'],
-          ['email'=>'superadmin@smartschool.fr', 'name'=>'Super Admin', 'color'=>'#7c3aed','icon'=>'bx-shield-alt-2'],
-        ];
-        foreach ($demos as $d): ?>
-        <button type="button" class="demo-btn"
-                onclick="fillForm('<?= $d['email'] ?>')">
-          <div class="demo-btn-icon" style="background:<?= $d['color'] ?>">
-            <i class="bx <?= $d['icon'] ?>"></i>
-          </div>
-          <div style="min-width:0">
-            <span class="demo-btn-name"><?= $d['name'] ?></span>
-            <span class="demo-btn-email"><?= $d['email'] ?></span>
-          </div>
-        </button>
-        <?php endforeach; ?>
-      </div>
+    <!-- Google -->
+    <?php if (!empty($googleUrl) && $tab === 'email'): ?>
+    <div class="au d1">
+      <a href="<?= clean($googleUrl) ?>" class="btn-google">
+        <svg width="20" height="20" viewBox="0 0 24 24" style="flex-shrink:0">
+          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+        </svg>
+        Continuer avec Google
+      </a>
+    </div>
+    <div class="divider au d1">ou avec vos identifiants</div>
+    <?php endif; ?>
+
+    <!-- Onglets -->
+    <div class="login-tabs au d1">
+      <button class="ltab <?= $tab==='email'?'active':'' ?>" onclick="switchTab('email')"><i class="bx bx-envelope"></i> Email</button>
+      <button class="ltab <?= $tab==='matricule'?'active':'' ?>" onclick="switchTab('matricule')"><i class="bx bx-id-card"></i> Eleve (matricule)</button>
     </div>
 
-    <div class="or-divider">ou connectez-vous manuellement</div>
-
-    <!-- Formulaire -->
-    <form method="POST" id="loginForm" novalidate>
-      <?= csrfField() ?>
-
-      <div class="form-group">
-        <label class="form-label" for="login">
-          Email ou nom d'utilisateur <span class="form-required">*</span>
-        </label>
-        <div class="input-wrap">
-          <i class="bx bx-user input-icon"></i>
-          <input
-            type="text"
-            id="login"
-            name="login"
-            class="form-control"
-            placeholder="admin@smartschool.fr"
-            value="<?= clean($_POST['login'] ?? '') ?>"
-            autocomplete="username"
-            required
-          >
+    <!-- Formulaire EMAIL -->
+    <div id="fEmail" style="<?= $tab!=='email'?'display:none':'' ?>">
+      <form method="POST" data-loading>
+        <?= csrfField() ?><input type="hidden" name="tab" value="email">
+        <div class="form-group au d2">
+          <label class="form-label">Email ou nom d'utilisateur <span class="form-required">*</span></label>
+          <div class="input-wrap"><i class="bx bx-user input-icon"></i>
+            <input type="text" name="login" class="form-control" placeholder="votre@email.fr" value="<?= clean($_POST['login'] ?? '') ?>" required autocomplete="username" autofocus>
+          </div>
         </div>
-      </div>
-
-      <div class="form-group">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">
-          <label class="form-label" for="password" style="margin:0">
-            Mot de passe <span class="form-required">*</span>
-          </label>
-          <a href="<?= BASE_URL ?>/auth/forgot-password.php" class="forgot-link">
-            Mot de passe oublie ?
-          </a>
+        <div class="form-group au d3">
+          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+            <label class="form-label" style="margin:0">Mot de passe <span class="form-required">*</span></label>
+            <a href="<?= BASE_URL ?>/auth/forgot-password.php" style="font-size:12.5px;color:var(--primary);font-weight:600">Oublie ?</a>
+          </div>
+          <div class="input-wrap"><i class="bx bx-lock-alt input-icon"></i>
+            <input type="password" name="password" id="p1" class="form-control pr" placeholder="••••••••" required autocomplete="current-password">
+            <span class="input-icon-right" data-toggle-pwd="p1" style="cursor:pointer"><i class="bx bx-show" id="i1"></i></span>
+          </div>
         </div>
-        <div class="input-wrap">
-          <i class="bx bx-lock-alt input-icon"></i>
-          <input
-            type="password"
-            id="password"
-            name="password"
-            class="form-control pr"
-            placeholder="••••••••••"
-            autocomplete="current-password"
-            required
-          >
-          <span class="input-icon-right" id="togglePwd">
-            <i class="bx bx-show" id="togglePwdIcon"></i>
-          </span>
-        </div>
-      </div>
-
-      <div class="form-group" style="margin-bottom:20px">
-        <label class="form-check">
-          <input type="checkbox" name="remember" class="form-check-input">
-          <span class="form-check-label">
-            Se souvenir de moi (<?= REMEMBER_DAYS ?> jours)
-          </span>
-        </label>
-      </div>
-
-      <button type="submit" class="btn-login" id="submitBtn">
-        <i class="bx bx-log-in"></i>
-        Se connecter
-      </button>
-    </form>
-
-    <div class="login-footer">
-      <p>Mot de passe demo : <strong>SmartSchool2025!</strong></p>
-      <p>&copy; <?= APP_YEAR ?> <?= clean($schoolName) ?></p>
+        <label class="form-check" style="margin-bottom:18px"><input type="checkbox" name="remember" class="form-check-input"><span class="form-check-label" style="font-size:13px">Se souvenir (<?= REMEMBER_DAYS ?> jours)</span></label>
+        <button type="submit" class="btn-auth"><i class="bx bx-log-in"></i> Se connecter</button>
+      </form>
     </div>
 
+    <!-- Formulaire MATRICULE -->
+    <div id="fMatricule" style="<?= $tab!=='matricule'?'display:none':'' ?>">
+      <div class="hint-box"><i class="bx bx-info-circle"></i>
+        <div><strong>Pour les eleves (7e annee et plus)</strong><br>Utilisez votre matricule et le mot de passe communique par l'etablissement. A la premiere connexion, vous definirez votre propre mot de passe.</div>
+      </div>
+      <form method="POST" data-loading>
+        <?= csrfField() ?><input type="hidden" name="tab" value="matricule">
+        <div class="form-group">
+          <label class="form-label">Matricule scolaire <span class="form-required">*</span></label>
+          <div class="input-wrap"><i class="bx bx-id-card input-icon"></i>
+            <input type="text" name="matricule" class="form-control" data-uppercase placeholder="STU-2024-0001" value="<?= clean($_POST['matricule'] ?? '') ?>" required style="letter-spacing:.05em">
+          </div>
+          <span class="form-hint">Format : STU-AAAA-XXXX</span>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Mot de passe <span class="form-required">*</span></label>
+          <div class="input-wrap"><i class="bx bx-lock-alt input-icon"></i>
+            <input type="password" name="password" id="p2" class="form-control pr" placeholder="••••••••" required>
+            <span class="input-icon-right" data-toggle-pwd="p2" style="cursor:pointer"><i class="bx bx-show" id="i2"></i></span>
+          </div>
+        </div>
+        <label class="form-check" style="margin-bottom:18px"><input type="checkbox" name="remember" class="form-check-input"><span class="form-check-label" style="font-size:13px">Se souvenir</span></label>
+        <button type="submit" class="btn-auth"><i class="bx bx-log-in"></i> Se connecter</button>
+      </form>
+    </div>
+
+    <div style="text-align:center;margin-top:22px;padding-top:16px;border-top:1px solid var(--border-light)">
+      <p style="font-size:13.5px;color:var(--text-muted)">Pas encore de compte ?
+        <a href="<?= BASE_URL ?>/auth/register.php" style="color:var(--primary);font-weight:700"><i class="bx bx-user-plus"></i> Faire une demande</a>
+      </p>
+    </div>
   </div>
 </div>
 
+<script src="<?= ASSETS_URL ?>/js/main.js"></script>
 <script>
-  // Remplir le formulaire avec un compte demo
-  function fillForm(email) {
-    document.getElementById('login').value    = email;
-    document.getElementById('password').value = 'SmartSchool2025!';
-    // Feedback visuel
-    event.currentTarget.style.borderColor = '#6366f1';
-    setTimeout(() => { event.currentTarget.style.borderColor = ''; }, 500);
-  }
-
-  // Toggle affichage mot de passe
-  document.getElementById('togglePwd').addEventListener('click', function () {
-    const input = document.getElementById('password');
-    const icon  = document.getElementById('togglePwdIcon');
-    if (input.type === 'password') {
-      input.type     = 'text';
-      icon.className = 'bx bx-hide';
-    } else {
-      input.type     = 'password';
-      icon.className = 'bx bx-show';
-    }
+function switchTab(t) {
+  document.getElementById('fEmail').style.display      = t==='email'     ?'':'none';
+  document.getElementById('fMatricule').style.display  = t==='matricule' ?'':'none';
+  document.querySelectorAll('.ltab').forEach((b,i)=>{
+    b.classList.toggle('active',(t==='email'&&i===0)||(t==='matricule'&&i===1));
   });
-
-  // Bouton dark mode
-  document.getElementById('darkBtn').addEventListener('click', function () {
-    const dark = document.body.classList.toggle('dark-mode');
-    document.documentElement.classList.toggle('dark-mode', dark);
-    document.getElementById('darkBtn').querySelector('i').className =
-      dark ? 'bx bx-sun' : 'bx bx-moon';
-    const exp = new Date(Date.now() + 365 * 86400000).toUTCString();
-    document.cookie = 'ss_dark_mode=' + (dark ? '1' : '0')
-                    + ';expires=' + exp + ';path=/';
-  });
-
-  // Spinner sur soumission
-  document.getElementById('loginForm').addEventListener('submit', function () {
-    const btn = document.getElementById('submitBtn');
-    btn.disabled   = true;
-    btn.innerHTML  = '<span style="width:15px;height:15px;border:2px solid rgba(255,255,255,0.35);'
-                   + 'border-top-color:#fff;border-radius:50%;display:inline-block;'
-                   + 'animation:spin 0.7s linear infinite"></span> Connexion...';
-  });
+}
+document.getElementById('darkBtn').addEventListener('click',function(){
+  const dark=document.body.classList.toggle('dark-mode');
+  document.documentElement.classList.toggle('dark-mode',dark);
+  this.querySelector('i').className=dark?'bx bx-sun':'bx bx-moon';
+  document.cookie='ss_dark_mode='+(dark?'1':'0')+';expires='+new Date(Date.now()+365*86400000).toUTCString()+';path=/';
+});
 </script>
-
-</body>
-</html>
+</body></html>

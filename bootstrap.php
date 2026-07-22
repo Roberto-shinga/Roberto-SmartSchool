@@ -1,19 +1,25 @@
 <?php
 // ============================================================
-//  SmartSchool — Bootstrap
-//  Emplacement : C:\xampp\htdocs\SmartSchool\bootstrap.php
-//  Ce fichier est inclus par TOUTES les pages du projet.
-//  Il charge les 3 fichiers de config dans le bon ordre.
+//  SmartSchool RDC — Point d'entree global
+//  Fichier : bootstrap.php (racine)
 // ============================================================
 
-// Racine absolue du projet
-define('ROOT_PATH_ABS', 'C:/xampp/htdocs/SmartSchool');
-
-// Afficher les erreurs PHP pendant le developpement
-ini_set('display_errors', 1);
+// Erreurs (desactiver en production)
 error_reporting(E_ALL);
+ini_set('display_errors', 1);
+ini_set('log_errors', 1);
 
-// Chargement dans l'ordre correct
-require_once ROOT_PATH_ABS . '/config/database.php';
-require_once ROOT_PATH_ABS . '/config/constants.php';
-require_once ROOT_PATH_ABS . '/config/functions.php';
+// Timezone RDC (Kinshasa)
+date_default_timezone_set('Africa/Kinshasa');
+
+// Chargement config
+require_once 'C:/xampp/htdocs/SmartSchool/config/constants.php';
+require_once 'C:/xampp/htdocs/SmartSchool/config/database.php';
+require_once 'C:/xampp/htdocs/SmartSchool/config/functions.php';
+
+// Demarrer la session
+startSession();
+
+// Protection XSS header
+header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: SAMEORIGIN');

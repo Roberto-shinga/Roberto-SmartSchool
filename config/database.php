@@ -1,48 +1,45 @@
 <?php
 // ============================================================
-//  SmartSchool — Connexion base de donnees
-//  Emplacement : C:\xampp\htdocs\SmartSchool\config\database.php
+//  SmartSchool RDC — Connexion base de donnees (PDO)
+//  Fichier : config/database.php
 // ============================================================
 
-// Parametres de connexion XAMPP par defaut
-define('DB_HOST',    'localhost');
-define('DB_NAME',    'smartschool');
-define('DB_USER',    'root');
-define('DB_PASS',    '');           // XAMPP : mot de passe vide par defaut
-define('DB_CHARSET', 'utf8mb4');
-
-// Connexion PDO — creee une seule fois
 function getDB(): PDO
 {
     static $pdo = null;
+    if ($pdo !== null) return $pdo;
 
-    if ($pdo === null) {
-        $dsn = 'mysql:host=' . DB_HOST
-             . ';dbname=' . DB_NAME
-             . ';charset=' . DB_CHARSET;
-
-        $options = [
+    try {
+        $dsn = sprintf(
+            'mysql:host=%s;dbname=%s;charset=%s',
+            DB_HOST, DB_NAME, DB_CHAR
+        );
+        $pdo = new PDO($dsn, DB_USER, DB_PASS, [
             PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES   => false,
-        ];
-
-        try {
-            $pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
-        } catch (PDOException $e) {
-            // Affiche l'erreur clairement pendant le developpement
-            die('<h2 style="color:red;font-family:sans-serif">
-                Erreur de connexion MySQL :<br>
-                ' . $e->getMessage() . '<br><br>
-                Verifie que MySQL est demarre dans XAMPP.
-            </h2>');
-        }
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci",
+        ]);
+    } catch (PDOException $e) {
+        // Afficher une page d'erreur propre
+        http_response_code(503);
+        die('
+        <!DOCTYPE html><html lang="fr"><head>
+        <meta charset="UTF-8"><title>Erreur de connexion</title>
+        <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f8faff;margin:0;}
+        .box{background:#fff;border-radius:12px;padding:40px;max-width:500px;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.08);}
+        h2{color:#ef4444;margin-bottom:12px;}p{color:#64748b;font-size:14px;}</style>
+        </head><body><div class="box">
+        <h2>⚠️ Impossible de se connecter a la base de donnees</h2>
+        <p>Verifiez que MySQL est demarré dans XAMPP et que la base <strong>smartschool</strong> existe.</p>
+        <p style="font-size:12px;margin-top:16px;color:#94a3b8">' . htmlspecialchars($e->getMessage()) . '</p>
+        </div></body></html>');
     }
-
     return $pdo;
 }
 
-// SELECT — retourne toutes les lignes
+// ── Requêtes raccourcies ─────────────────────────────────────
+
 function dbFetchAll(string $sql, array $params = []): array
 {
     $stmt = getDB()->prepare($sql);
@@ -50,15 +47,14 @@ function dbFetchAll(string $sql, array $params = []): array
     return $stmt->fetchAll();
 }
 
-// SELECT — retourne une seule ligne
-function dbFetchOne(string $sql, array $params = []): array|false
+function dbFetchOne(string $sql, array $params = []): ?array
 {
     $stmt = getDB()->prepare($sql);
     $stmt->execute($params);
-    return $stmt->fetch();
+    $row = $stmt->fetch();
+    return $row ?: null;
 }
 
-// INSERT / UPDATE / DELETE
 function dbExecute(string $sql, array $params = []): int
 {
     $stmt = getDB()->prepare($sql);
@@ -66,8 +62,13 @@ function dbExecute(string $sql, array $params = []): int
     return $stmt->rowCount();
 }
 
-// Dernier ID insere
-function dbLastId(): string
+function dbLastId(): int
 {
-    return getDB()->lastInsertId();
+    return (int) getDB()->lastInsertId();
+}
+
+function dbCount(string $table, string $where = '1=1', array $params = []): int
+{
+    $row = dbFetchOne("SELECT COUNT(*) c FROM `$table` WHERE $where", $params);
+    return (int)($row['c'] ?? 0);
 }

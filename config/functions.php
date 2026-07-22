@@ -1,7 +1,7 @@
 <?php
 // ============================================================
-//  SmartSchool — Fonctions utilitaires
-//  Emplacement : config/functions.php
+//  SmartSchool RDC — Fonctions globales
+//  Fichier : config/functions.php
 // ============================================================
 
 // ════════════════════════════════════════════════
@@ -13,69 +13,87 @@ function startSession(): void
     if (session_status() === PHP_SESSION_NONE) {
         session_name(SESSION_NAME);
         session_set_cookie_params([
-            'lifetime' => SESSION_LIFETIME,
+            'lifetime' => SESSION_TIMEOUT,
             'path'     => '/',
+            'secure'   => false,
             'httponly' => true,
-            'samesite' => 'Strict',
+            'samesite' => 'Lax',
         ]);
         session_start();
     }
+    // Timeout inactivite
+    if (isset($_SESSION['last_activity']) &&
+        (time() - $_SESSION['last_activity']) > SESSION_TIMEOUT) {
+        session_unset();
+        session_destroy();
+        session_start();
+    }
+    $_SESSION['last_activity'] = time();
 }
 
 function isLoggedIn(): bool
 {
-    startSession();
-    return !empty($_SESSION['user_id']);
+    return isset($_SESSION['user']['id']);
 }
 
-function currentUser(): array|null
+function currentUser(): ?array
 {
-    startSession();
     return $_SESSION['user'] ?? null;
 }
 
 function currentRole(): int
 {
-    $user = currentUser();
-    return $user ? (int)$user['role_id'] : 0;
+    return (int)($_SESSION['user']['role_id'] ?? 0);
 }
 
-// Protege une page — redirige si pas le bon role
 function requireRole(int ...$roles): void
 {
     if (!isLoggedIn()) {
-        redirect(BASE_URL . '/auth/login.php');
+        redirectWith(BASE_URL . '/auth/login.php', 'warning', 'Veuillez vous connecter.');
     }
-    if (!in_array(currentRole(), $roles, true)) {
+    if (!empty($roles) && !in_array(currentRole(), $roles)) {
         redirect(BASE_URL . '/auth/unauthorized.php');
     }
 }
 
 function loginUser(array $user): void
 {
-    startSession();
     session_regenerate_id(true);
-    $_SESSION['user_id'] = $user['id'];
-    $_SESSION['user']    = $user;
-
-    // Mettre a jour last_login
+    $_SESSION['user'] = [
+        'id'                   => $user['id'],
+        'role_id'              => $user['role_id'],
+        'username'             => $user['username'],
+        'email'                => $user['email'] ?? null,
+        'first_name'           => $user['first_name'],
+        'last_name'            => $user['last_name'],
+        'must_change_password' => $user['must_change_password'] ?? 0,
+    ];
     dbExecute("UPDATE users SET last_login = NOW() WHERE id = ?", [$user['id']]);
+    logActivity('login', 'Connexion reussie : ' . $user['username']);
 }
 
 function logoutUser(): void
 {
-    startSession();
-    $_SESSION = [];
+    session_unset();
     session_destroy();
 }
 
+function hashPassword(string $pwd): string
+{
+    return password_hash($pwd, PASSWORD_BCRYPT, ['cost' => 12]);
+}
+
+function verifyPassword(string $pwd, string $hash): bool
+{
+    return password_verify($pwd, $hash);
+}
+
 // ════════════════════════════════════════════════
-//  SECURITE
+//  CSRF
 // ════════════════════════════════════════════════
 
 function csrfToken(): string
 {
-    startSession();
     if (empty($_SESSION[CSRF_TOKEN_NAME])) {
         $_SESSION[CSRF_TOKEN_NAME] = bin2hex(random_bytes(32));
     }
@@ -84,31 +102,73 @@ function csrfToken(): string
 
 function csrfField(): string
 {
-    return '<input type="hidden" name="' . CSRF_TOKEN_NAME
-         . '" value="' . csrfToken() . '">';
+    return '<input type="hidden" name="' . CSRF_TOKEN_NAME . '" value="' . csrfToken() . '">';
 }
 
 function verifyCsrf(): void
 {
-    $token = $_POST[CSRF_TOKEN_NAME] ?? '';
+    $token = $_POST[CSRF_TOKEN_NAME] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
     if (!hash_equals(csrfToken(), $token)) {
-        die('Token CSRF invalide.');
+        http_response_code(403);
+        die('Token CSRF invalide. Veuillez recharger la page.');
     }
 }
 
-function clean(string $value): string
+// ════════════════════════════════════════════════
+//  FLASH MESSAGES
+// ════════════════════════════════════════════════
+
+function setFlash(string $type, string $message): void
 {
-    return htmlspecialchars(trim($value), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $_SESSION['flash'] = ['type' => $type, 'message' => $message];
 }
 
-function hashPassword(string $password): string
+function getFlash(): ?array
 {
-    return password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+    $flash = $_SESSION['flash'] ?? null;
+    unset($_SESSION['flash']);
+    return $flash;
 }
 
-function verifyPassword(string $password, string $hash): bool
+function showFlash(): string
 {
-    return password_verify($password, $hash);
+    $f = getFlash();
+    if (!$f) return '';
+    $icons = ['success'=>'bx-check-circle','danger'=>'bx-x-circle','warning'=>'bx-error','info'=>'bx-info-circle'];
+    $icon  = $icons[$f['type']] ?? 'bx-info-circle';
+    return '<div class="alert alert-' . clean($f['type']) . ' animate-in" style="margin-bottom:20px">
+              <i class="bx ' . $icon . '"></i> ' . clean($f['message']) . '
+            </div>';
+}
+
+// ════════════════════════════════════════════════
+//  REDIRECTIONS
+// ════════════════════════════════════════════════
+
+function redirect(string $url): void
+{
+    header('Location: ' . $url);
+    exit;
+}
+
+function redirectWith(string $url, string $type, string $message): void
+{
+    setFlash($type, $message);
+    redirect($url);
+}
+
+// ════════════════════════════════════════════════
+//  SECURITE & NETTOYAGE
+// ════════════════════════════════════════════════
+
+function clean(mixed $val): string
+{
+    return htmlspecialchars((string)($val ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+}
+
+function sanitizeString(string $str): string
+{
+    return trim(strip_tags($str));
 }
 
 function generateToken(int $length = 32): string
@@ -117,161 +177,118 @@ function generateToken(int $length = 32): string
 }
 
 // ════════════════════════════════════════════════
-//  REDIRECTIONS & FLASH
+//  MATRICULE & IDENTIFIANTS
 // ════════════════════════════════════════════════
 
-function redirect(string $url): never
+function generateStudentNumber(): string
 {
-    header('Location: ' . $url);
-    exit();
+    $year  = date('Y');
+    $count = dbFetchOne("SELECT COUNT(*) c FROM students WHERE YEAR(created_at) = ?", [$year])['c'] ?? 0;
+    return 'STU-' . $year . '-' . str_pad($count + 1, 4, '0', STR_PAD_LEFT);
 }
 
-function redirectWith(string $url, string $type, string $message): never
+function generateEmployeeId(): string
 {
-    startSession();
-    $_SESSION['flash'] = ['type' => $type, 'message' => $message];
-    redirect($url);
+    $count = dbFetchOne("SELECT COUNT(*) c FROM teachers")['c'] ?? 0;
+    return 'EMP-' . str_pad($count + 1, 4, '0', STR_PAD_LEFT);
 }
 
-function getFlash(): array|null
+function generateReceiptNumber(): string
 {
-    startSession();
-    if (isset($_SESSION['flash'])) {
-        $flash = $_SESSION['flash'];
-        unset($_SESSION['flash']);
-        return $flash;
+    return 'REC-' . date('Ymd') . '-' . strtoupper(bin2hex(random_bytes(3)));
+}
+
+// Generer un mot de passe temporaire pour premiere connexion
+function generateTempPassword(): string
+{
+    $chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    $pwd   = '';
+    for ($i = 0; $i < 8; $i++) {
+        $pwd .= $chars[random_int(0, strlen($chars) - 1)];
     }
-    return null;
-}
-
-function showFlash(): string
-{
-    $flash = getFlash();
-    if (!$flash) return '';
-
-    $icons = [
-        'success' => 'bx-check-circle',
-        'danger'  => 'bx-x-circle',
-        'warning' => 'bx-error',
-        'info'    => 'bx-info-circle',
-    ];
-    $icon = $icons[$flash['type']] ?? 'bx-bell';
-
-    return '<div class="alert alert-' . $flash['type'] . '">'
-         . '<i class="bx ' . $icon . '"></i> '
-         . clean($flash['message'])
-         . '</div>';
+    return $pwd;
 }
 
 // ════════════════════════════════════════════════
 //  FORMATAGE
 // ════════════════════════════════════════════════
 
-function formatMoney(float $amount): string
+function formatMoney(float $amount, string $currency = null): string
 {
-    $currency = getSetting('currency', 'FCFA');
-    return number_format($amount, 0, ',', ' ') . ' ' . $currency;
+    $cur = $currency ?? getSetting('currency', 'FC');
+    return number_format($amount, 0, ',', '.') . ' ' . $cur;
 }
 
-function formatDate(string $date): string
+function formatDate(string|null $date): string
 {
-    if (empty($date) || $date === '0000-00-00') return '—';
+    if (!$date) return '—';
     return date('d/m/Y', strtotime($date));
 }
 
-function formatDateTime(string $datetime): string
+function formatDateTime(string|null $dt): string
 {
-    if (empty($datetime)) return '—';
-    return date('d/m/Y H:i', strtotime($datetime));
+    if (!$dt) return '—';
+    return date('d/m/Y H:i', strtotime($dt));
 }
 
 function timeAgo(string $datetime): string
 {
     $diff = time() - strtotime($datetime);
-    if ($diff < 60)     return 'il y a ' . $diff . 's';
-    if ($diff < 3600)   return 'il y a ' . floor($diff / 60) . 'min';
-    if ($diff < 86400)  return 'il y a ' . floor($diff / 3600) . 'h';
-    if ($diff < 604800) return 'il y a ' . floor($diff / 86400) . 'j';
+    if ($diff < 60)     return 'A l\'instant';
+    if ($diff < 3600)   return floor($diff / 60) . ' min';
+    if ($diff < 86400)  return floor($diff / 3600) . 'h';
+    if ($diff < 604800) return floor($diff / 86400) . 'j';
     return formatDate($datetime);
 }
 
-function getInitials(string $firstName, string $lastName): string
+function getInitials(string $fn, string $ln): string
 {
-    return strtoupper(mb_substr($firstName, 0, 1) . mb_substr($lastName, 0, 1));
+    return strtoupper(substr($fn, 0, 1) . substr($ln, 0, 1));
 }
 
-function getMention(float $avg): array
+// ════════════════════════════════════════════════
+//  MENTIONS / APPRÉCIATIONS
+// ════════════════════════════════════════════════
+
+function getMention(float $score): array
 {
     foreach (GRADE_MENTIONS as $m) {
-        if ($avg >= $m['min'] && $avg <= $m['max']) return $m;
+        if ($score >= $m['min'] && $score <= $m['max']) return $m;
     }
-    return ['label' => 'Non note', 'color' => '#6b7280'];
-}
-
-function generateReceiptNumber(): string
-{
-    return 'REC-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -5));
-}
-
-function generateStudentNumber(): string
-{
-    $count = dbFetchOne("SELECT COUNT(*) AS c FROM students")['c'] ?? 0;
-    return 'STU-' . date('Y') . '-' . str_pad($count + 1, 4, '0', STR_PAD_LEFT);
+    return ['label' => 'Non note', 'color' => '#94a3b8'];
 }
 
 // ════════════════════════════════════════════════
-//  NOTIFICATIONS & MESSAGES
-// ════════════════════════════════════════════════
-
-function countUnreadNotifications(int $userId): int
-{
-    $row = dbFetchOne(
-        "SELECT COUNT(*) AS c FROM notifications
-         WHERE user_id = ? AND is_read = 0",
-        [$userId]
-    );
-    return (int)($row['c'] ?? 0);
-}
-
-function countUnreadMessages(int $userId): int
-{
-    $row = dbFetchOne(
-        "SELECT COUNT(*) AS c FROM messages
-         WHERE receiver_id = ? AND is_read = 0",
-        [$userId]
-    );
-    return (int)($row['c'] ?? 0);
-}
-
-function createNotification(int $userId, string $title, string $message, string $type = 'info'): void
-{
-    dbExecute(
-        "INSERT INTO notifications (user_id, title, message, type)
-         VALUES (?, ?, ?, ?)",
-        [$userId, $title, $message, $type]
-    );
-}
-
-// ════════════════════════════════════════════════
-//  PARAMETRES SYSTEME
+//  PARAMÈTRES SYSTÈME
 // ════════════════════════════════════════════════
 
 function getSetting(string $key, string $default = ''): string
 {
-    $row = dbFetchOne(
-        "SELECT setting_value FROM system_settings WHERE setting_key = ?",
-        [$key]
-    );
-    return $row ? (string)$row['setting_value'] : $default;
+    static $cache = [];
+    if (!isset($cache[$key])) {
+        $row = dbFetchOne("SELECT setting_value FROM system_settings WHERE setting_key = ?", [$key]);
+        $cache[$key] = $row['setting_value'] ?? $default;
+    }
+    return $cache[$key] ?: $default;
+}
+
+function setSetting(string $key, string $value): void
+{
+    $exists = dbFetchOne("SELECT id FROM system_settings WHERE setting_key = ?", [$key]);
+    if ($exists) {
+        dbExecute("UPDATE system_settings SET setting_value = ? WHERE setting_key = ?", [$value, $key]);
+    } else {
+        dbExecute("INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?)", [$key, $value]);
+    }
 }
 
 // ════════════════════════════════════════════════
-//  THEME & UI
+//  THEME / DARK MODE
 // ════════════════════════════════════════════════
 
 function isDarkMode(): bool
 {
-    return isset($_COOKIE[DARK_MODE_COOKIE]) && $_COOKIE[DARK_MODE_COOKIE] === '1';
+    return ($_COOKIE['ss_dark_mode'] ?? '0') === '1';
 }
 
 function themeClass(): string
@@ -279,20 +296,51 @@ function themeClass(): string
     return isDarkMode() ? 'dark-mode' : '';
 }
 
-function avatarUrl(string $filename, string $folder = 'avatars'): string
+// ════════════════════════════════════════════════
+//  NOTIFICATIONS & MESSAGES
+// ════════════════════════════════════════════════
+
+function createNotification(int $userId, string $title, string $message, string $type = 'info', string $link = ''): void
 {
-    $path = UPLOADS_PATH . '/' . $folder . '/' . $filename;
-    if (!empty($filename) && $filename !== 'default.png' && file_exists($path)) {
-        return UPLOADS_URL . '/' . $folder . '/' . $filename;
+    dbExecute(
+        "INSERT INTO notifications (user_id, title, message, type, link) VALUES (?, ?, ?, ?, ?)",
+        [$userId, $title, $message, $type, $link]
+    );
+}
+
+function countUnreadNotifications(int $userId): int
+{
+    return (int)(dbFetchOne("SELECT COUNT(*) c FROM notifications WHERE user_id = ? AND is_read = 0", [$userId])['c'] ?? 0);
+}
+
+function countUnreadMessages(int $userId): int
+{
+    return (int)(dbFetchOne("SELECT COUNT(*) c FROM messages WHERE receiver_id = ? AND is_read = 0", [$userId])['c'] ?? 0);
+}
+
+// ════════════════════════════════════════════════
+//  LOGS
+// ════════════════════════════════════════════════
+
+function logActivity(string $action, string $description = ''): void
+{
+    $userId = $_SESSION['user']['id'] ?? null;
+    $ip     = $_SERVER['REMOTE_ADDR'] ?? null;
+    try {
+        dbExecute(
+            "INSERT INTO activity_logs (user_id, action, description, ip_address) VALUES (?, ?, ?, ?)",
+            [$userId, $action, $description, $ip]
+        );
+    } catch (Exception $e) {
+        // Ne pas bloquer si le log echoue
     }
-    return ASSETS_URL . '/images/default-avatar.png';
 }
 
 // ════════════════════════════════════════════════
 //  PAGINATION
 // ════════════════════════════════════════════════
 
-function paginate(int $total, int $page = 1, int $perPage = ITEMS_PER_PAGE): array
+function paginate(int $total, int $page = 1, int $perPage = PER_PAGE): array
 {
     $totalPages  = max(1, (int)ceil($total / $perPage));
     $currentPage = max(1, min($page, $totalPages));
@@ -312,33 +360,86 @@ function paginate(int $total, int $page = 1, int $perPage = ITEMS_PER_PAGE): arr
 }
 
 // ════════════════════════════════════════════════
-//  DIVERS
+//  UPLOAD DE FICHIERS
 // ════════════════════════════════════════════════
 
-function isAjax(): bool
+function uploadFile(array $file, string $subDir = 'general', array $allowed = null): array
 {
-    return isset($_SERVER['HTTP_X_REQUESTED_WITH'])
-        && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest';
-}
+    $allowed  = $allowed ?? array_merge(ALLOWED_IMG, ALLOWED_DOCS);
+    $destDir  = UPLOADS_PATH . '/' . $subDir;
 
-function jsonResponse(array $data, int $code = 200): never
-{
-    http_response_code($code);
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($data, JSON_UNESCAPED_UNICODE);
-    exit();
-}
+    if (!is_dir($destDir)) mkdir($destDir, 0755, true);
 
-function logActivity(string $action, string $description = ''): void
-{
-    $userId = isLoggedIn() ? (int)($_SESSION['user_id'] ?? null) : null;
-    try {
-        dbExecute(
-            "INSERT INTO activity_logs (user_id, action, description, ip_address)
-             VALUES (?, ?, ?, ?)",
-            [$userId, $action, $description, $_SERVER['REMOTE_ADDR'] ?? '']
-        );
-    } catch (Exception $e) {
-        // Silencieux si la table n'existe pas encore
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        return ['success' => false, 'error' => 'Erreur lors du telechargement.'];
     }
+    if ($file['size'] > MAX_UPLOAD_SIZE) {
+        return ['success' => false, 'error' => 'Fichier trop volumineux (max 10 Mo).'];
+    }
+
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, $allowed)) {
+        return ['success' => false, 'error' => 'Format de fichier non autorise.'];
+    }
+
+    $newName = uniqid() . '_' . time() . '.' . $ext;
+    $destPath = $destDir . '/' . $newName;
+
+    if (!move_uploaded_file($file['tmp_name'], $destPath)) {
+        return ['success' => false, 'error' => 'Impossible de sauvegarder le fichier.'];
+    }
+
+    return [
+        'success'   => true,
+        'filename'  => $newName,
+        'path'      => $destPath,
+        'url'       => UPLOADS_URL . '/' . $subDir . '/' . $newName,
+        'extension' => $ext,
+    ];
+}
+
+// ════════════════════════════════════════════════
+//  GOOGLE OAUTH
+// ════════════════════════════════════════════════
+
+function buildGoogleAuthUrl(): string
+{
+    if (empty(GOOGLE_CLIENT_ID)) return '';
+
+    $state = bin2hex(random_bytes(16));
+    $_SESSION['google_oauth_state'] = $state;
+
+    return GOOGLE_AUTH_URL . '?' . http_build_query([
+        'client_id'     => GOOGLE_CLIENT_ID,
+        'redirect_uri'  => GOOGLE_REDIRECT_URI,
+        'response_type' => 'code',
+        'scope'         => 'openid email profile',
+        'state'         => $state,
+        'access_type'   => 'online',
+        'prompt'        => 'select_account',
+    ]);
+}
+
+// ════════════════════════════════════════════════
+//  HELPERS ELEVES
+// ════════════════════════════════════════════════
+
+// Nom complet d'un eleve (avec ou sans compte user)
+function getStudentFullName(array $student): string
+{
+    if (!empty($student['first_name'])) {
+        return trim($student['first_name'] . ' ' . ($student['last_name'] ?? ''));
+    }
+    // Chercher dans users si lien user_id
+    if (!empty($student['user_id'])) {
+        $u = dbFetchOne("SELECT first_name, last_name FROM users WHERE id = ?", [$student['user_id']]);
+        if ($u) return trim($u['first_name'] . ' ' . $u['last_name']);
+    }
+    return 'Eleve #' . $student['id'];
+}
+
+// Verifier si un eleve doit avoir un compte (7e+)
+function studentNeedsAccount(int $levelId): bool
+{
+    return $levelId >= ACCOUNT_MIN_LEVEL;
 }
