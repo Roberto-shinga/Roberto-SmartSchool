@@ -26,8 +26,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$user || !verifyPassword($password, $user['password'])) {
                 $error = 'Identifiants incorrects.';
                 logActivity('login_failed', 'Echec email : ' . $login);
+            } elseif ((int)$user['role_id'] === ROLE_SUPER_ADMIN && getSetting('superadmin_2fa_enabled', '1') === '1') {
+                // ── Super Administrateur : double authentification obligatoire ──
+                // Pas de session ouverte tant que le code n'est pas verifie.
+                $_SESSION['pending_2fa'] = [
+                    'user_id'  => (int)$user['id'],
+                    'remember' => !empty($_POST['remember']),
+                ];
+                $code = generate2FACode($user['id'], 'login');
+                send2FACodeEmail($user['email'], $user['first_name'], $code);
+                logActivity('superadmin_2fa_sent', 'Code envoye pour connexion Super Admin : ' . $user['username']);
+                if (APP_ENV === 'development') {
+                    $_SESSION['dev_2fa_code'] = $code; // affichage debug uniquement
+                }
+                redirect(BASE_URL . '/auth/verify-2fa.php');
             } else {
                 loginUser($user);
+                if ((int)$user['role_id'] === ROLE_SUPER_ADMIN) {
+                    // 2FA desactivee via les parametres de securite : acces direct autorise
+                    $_SESSION['superadmin_2fa_ok'] = true;
+                }
                 if (!empty($_POST['remember'])) {
                     setcookie('ss_remember', generateToken(), time() + REMEMBER_DAYS * 86400, '/', '', false, true);
                 }

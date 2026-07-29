@@ -7,13 +7,13 @@ $error    = '';
 $prefill  = $_SESSION['google_prefill'] ?? [];
 $fromG    = isset($_GET['from']) && $_GET['from'] === 'google';
 
-// Roles disponibles a l'auto-inscription (pas admin, pas super_admin)
+// Roles disponibles a l'auto-inscription (uniquement Parent).
+// Enseignants et comptables sont crees exclusivement par l'administration,
+// via une invitation securisee par email (voir admin/teachers.php,
+// admin/accountants.php et auth/activate-account.php).
 $regRoles = [
-    ROLE_PARENT     => ['label'=>'Parent',    'icon'=>'bx-group',      'desc'=>'Suivre la scolarite de mon enfant'],
-    ROLE_ACCOUNTANT => ['label'=>'Comptable', 'icon'=>'bx-calculator', 'desc'=>'Gerer les paiements et finances'],
+    ROLE_PARENT => ['label'=>'Parent', 'icon'=>'bx-group', 'desc'=>'Suivre la scolarite de mon enfant'],
 ];
-
-// Note : enseignants et eleves sont créés par l'administration uniquement
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCsrf();
@@ -118,7 +118,7 @@ $googleUrl  = buildGoogleAuthUrl();
     .m-brand{display:flex;align-items:center;gap:12px;margin-bottom:24px;}
     @media(min-width:960px){.m-brand{display:none;}}
     .m-brand-icon{width:40px;height:40px;background:var(--grad-primary);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.1rem;}
-    .role-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px;}
+    .role-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:18px;}
     .role-card{display:flex;flex-direction:column;align-items:center;gap:7px;padding:14px 10px;border:2px solid var(--border);border-radius:var(--radius-lg);cursor:pointer;transition:all var(--transition);text-align:center;}
     .role-card:hover,.role-card.sel{border-color:var(--primary);background:var(--primary-bg);}
     .role-card input{display:none;}

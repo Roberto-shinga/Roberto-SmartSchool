@@ -9,6 +9,11 @@ define('APP_NAME',     'SmartSchool');
 define('APP_VERSION',  '2.0.0');
 define('APP_YEAR',     date('Y'));
 
+// Environnement : 'development' affiche des aides de debug (ex: code 2FA
+// a l'ecran quand aucun serveur SMTP n'est configure). A passer en
+// 'production' avant mise en ligne reelle.
+define('APP_ENV', 'development');
+
 // ── Chemin absolu racine ─────────────────────────────────────
 define('ROOT_PATH',     'C:/xampp/htdocs/SmartSchool');
 define('BASE_URL',      'http://localhost/SmartSchool');
@@ -58,13 +63,18 @@ define('ROLE_COLORS', [
 
 // ── Redirections apres connexion ─────────────────────────────
 define('ROLE_REDIRECTS', [
-    ROLE_SUPER_ADMIN => BASE_URL . '/admin/index.php',
+    ROLE_SUPER_ADMIN => BASE_URL . '/superadmin/index.php',
     ROLE_ADMIN       => BASE_URL . '/admin/index.php',
     ROLE_TEACHER     => BASE_URL . '/teachers/index.php',
     ROLE_STUDENT     => BASE_URL . '/students/index.php',
     ROLE_PARENT      => BASE_URL . '/parents/index.php',
     ROLE_ACCOUNTANT  => BASE_URL . '/accountant/index.php',
 ]);
+
+// ── Double authentification Super Administrateur (2FA) ───────
+define('SUPERADMIN_2FA_TTL',          600); // validite du code : 10 min
+define('SUPERADMIN_2FA_MAX_ATTEMPTS', 5);   // tentatives avant blocage du code
+define('SUPERADMIN_2FA_RESEND_DELAY', 60);  // delai mini avant renvoi (secondes)
 
 // ── Niveaux scolaires RDC ────────────────────────────────────
 define('LEVEL_PRIMAIRE', 1);
@@ -133,6 +143,12 @@ define('DB_NAME', 'smartschool');
 define('DB_USER', 'root');
 define('DB_PASS', '');
 define('DB_CHAR', 'utf8mb4');
+
+// ── Sauvegardes (Super Admin) ─────────────────────────────────
+// Adapter ces chemins si ton installation XAMPP est ailleurs.
+define('BACKUPS_PATH',   ROOT_PATH . '/storage/backups');
+define('MYSQLDUMP_BIN',  'C:/xampp/mysql/bin/mysqldump.exe');
+define('MYSQL_BIN',      'C:/xampp/mysql/bin/mysql.exe');
 
 // ── Google OAuth (optionnel) ─────────────────────────────────
 // Remplace par tes credentials Google Cloud Console
