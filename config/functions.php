@@ -56,6 +56,190 @@ function requireRole(int ...$roles): void
     }
 }
 
+// ════════════════════════════════════════════════
+//  INVITATIONS (enseignants, comptables)
+// ════════════════════════════════════════════════
+
+// Cree une invitation pour un utilisateur DEJA cree (profil pre-rempli
+// par l'administrateur). Invalide automatiquement toute invitation
+// encore en attente pour ce meme utilisateur (jamais deux tokens actifs).
+// Retourne le token EN CLAIR (a inserer dans le lien envoye par email —
+// seul son hash est conserve en base).
+function createInvitation(int $userId, int $roleId, int $invitedBy, int $hours = 48): string
+{
+    dbExecute(
+        "UPDATE invitations SET status='cancelled', cancelled_at=NOW() WHERE user_id=? AND status='pending'",
+        [$userId]
+    );
+
+    $token = bin2hex(random_bytes(32));
+    dbExecute(
+        "INSERT INTO invitations (user_id, role_id, token_hash, invited_by, expires_at)
+         VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? HOUR))",
+        [$userId, $roleId, hash('sha256', $token), $invitedBy, $hours]
+    );
+
+    return $token;
+}
+
+// Envoie l'email d'invitation. Meme limite que le 2FA : sans SMTP
+// configure sur XAMPP, mail() echoue souvent silencieusement.
+function sendInvitationEmail(string $toEmail, string $firstName, string $roleLabel, string $token, int $hours = 48): bool
+{
+    if (empty($toEmail)) return false;
+
+    $link    = BASE_URL . '/auth/activate-account.php?token=' . $token;
+    $subject = '[' . APP_NAME . '] Invitation a rejoindre ' . APP_NAME;
+    $message = "Bonjour $firstName,\n\n"
+             . "Vous avez ete invite(e) a rejoindre " . APP_NAME . " en tant que $roleLabel.\n\n"
+             . "Activez votre compte via ce lien :\n$link\n\n"
+             . "Cette invitation expire dans $hours heures et ne peut etre utilisee qu'une seule fois.\n"
+             . "Si vous n'etes pas a l'origine de cette demande, ignorez ce message.\n";
+    $host    = parse_url(BASE_URL, PHP_URL_HOST) ?: 'localhost';
+    $headers = 'From: no-reply@' . $host;
+
+    $sent = @mail($toEmail, $subject, $message, $headers);
+    if (!$sent) {
+        logActivity('invitation_mail_failed', "Envoi invitation echoue vers $toEmail");
+    }
+    return $sent;
+}
+
+// Recherche une invitation par token en clair (le hash est recalcule
+// pour la comparaison — le token en clair n'est jamais stocke).
+// Marque automatiquement comme 'expired' si la date est depassee.
+function findInvitationByToken(string $token): ?array
+{
+    $hash = hash('sha256', $token);
+    $inv  = dbFetchOne(
+        "SELECT i.*, u.first_name, u.last_name, u.email, u.username, u.is_active
+         FROM invitations i JOIN users u ON i.user_id = u.id
+         WHERE i.token_hash = ? LIMIT 1",
+        [$hash]
+    );
+
+    if ($inv && $inv['status'] === 'pending' && strtotime($inv['expires_at']) < time()) {
+        dbExecute("UPDATE invitations SET status='expired' WHERE id=?", [$inv['id']]);
+        $inv['status'] = 'expired';
+    }
+    return $inv ?: null;
+}
+
+function cancelInvitation(int $invitationId): void
+{
+    dbExecute(
+        "UPDATE invitations SET status='cancelled', cancelled_at=NOW() WHERE id=? AND status='pending'",
+        [$invitationId]
+    );
+}
+
+// ════════════════════════════════════════════════
+//  SUPER ADMINISTRATEUR — RBAC & DOUBLE AUTHENTIFICATION
+// ════════════════════════════════════════════════
+
+// Acces reserve au Super Admin, avec verification 2FA obligatoire.
+// A utiliser en tete de TOUTES les pages de /superadmin.
+function requireSuperAdmin(): void
+{
+    requireRole(ROLE_SUPER_ADMIN);
+    if (empty($_SESSION['superadmin_2fa_ok'])) {
+        redirectWith(BASE_URL . '/auth/login.php', 'warning',
+            'Verification de securite requise. Veuillez vous reconnecter.');
+    }
+}
+
+// Empeche un utilisateur (y compris Super Admin) de modifier son propre
+// role. Ne jamais faire confiance au formulaire pour cette verification.
+function preventSelfRoleChange(int $targetUserId): void
+{
+    $current = currentUser();
+    if ($current && (int)$current['id'] === $targetUserId) {
+        http_response_code(403);
+        die('Action interdite : vous ne pouvez pas modifier votre propre role.');
+    }
+}
+
+// Genere un code a 6 chiffres, le stocke hache en base (purpose='login'),
+// et tente de l'envoyer par email. Retourne le code en clair UNIQUEMENT
+// pour l'affichage en mode developpement (voir verify-2fa.php).
+function generate2FACode(int $userId, string $purpose = 'login'): string
+{
+    $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+
+    dbExecute(
+        "INSERT INTO two_factor_codes (user_id, code_hash, purpose, expires_at)
+         VALUES (?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))",
+        [$userId, password_hash($code, PASSWORD_BCRYPT, ['cost' => 10]), $purpose, SUPERADMIN_2FA_TTL]
+    );
+
+    return $code;
+}
+
+// Envoie le code par email. En environnement 'development' sans SMTP
+// configure, mail() echoue silencieusement la plupart du temps sur
+// XAMPP : on logge simplement l'echec, le code reste utilisable via
+// le bandeau de debug affiche sur la page de verification.
+function send2FACodeEmail(string $toEmail, string $firstName, string $code): bool
+{
+    if (empty($toEmail)) return false;
+
+    $subject = '[' . APP_NAME . '] Code de verification de connexion';
+    $message = "Bonjour $firstName,\n\n"
+             . "Voici votre code de verification pour vous connecter en tant que "
+             . "Super Administrateur :\n\n    $code\n\n"
+             . "Ce code expire dans " . (int)(SUPERADMIN_2FA_TTL / 60) . " minutes.\n"
+             . "Si vous n'etes pas a l'origine de cette demande, ignorez ce message.\n";
+    $host    = parse_url(BASE_URL, PHP_URL_HOST) ?: 'localhost';
+    $headers = 'From: no-reply@' . $host;
+
+    $sent = @mail($toEmail, $subject, $message, $headers);
+    if (!$sent) {
+        logActivity('superadmin_2fa_mail_failed', "Envoi email 2FA echoue vers $toEmail (SMTP non configure ?)");
+    }
+    return $sent;
+}
+
+// Verifie le code saisi pour l'utilisateur donne. Gere les tentatives
+// et l'expiration. Retourne un tableau ['ok' => bool, 'error' => ?string].
+function verify2FACode(int $userId, string $inputCode, string $purpose = 'login'): array
+{
+    $row = dbFetchOne(
+        "SELECT * FROM two_factor_codes
+         WHERE user_id = ? AND purpose = ? AND used = 0
+         ORDER BY created_at DESC LIMIT 1",
+        [$userId, $purpose]
+    );
+
+    if (!$row) {
+        return ['ok' => false, 'error' => 'Aucun code actif. Demandez-en un nouveau.'];
+    }
+    if (strtotime($row['expires_at']) < time()) {
+        return ['ok' => false, 'error' => 'Ce code a expire. Demandez-en un nouveau.'];
+    }
+    if ($row['attempts'] >= SUPERADMIN_2FA_MAX_ATTEMPTS) {
+        return ['ok' => false, 'error' => 'Trop de tentatives. Demandez un nouveau code.'];
+    }
+
+    dbExecute("UPDATE two_factor_codes SET attempts = attempts + 1 WHERE id = ?", [$row['id']]);
+
+    if (!password_verify($inputCode, $row['code_hash'])) {
+        return ['ok' => false, 'error' => 'Code incorrect.'];
+    }
+
+    dbExecute("UPDATE two_factor_codes SET used = 1 WHERE id = ?", [$row['id']]);
+    return ['ok' => true, 'error' => null];
+}
+
+// ════════════════════════════════════════════════
+//  ASSISTANT DE CONFIGURATION INITIALE
+// ════════════════════════════════════════════════
+
+function isSetupCompleted(): bool
+{
+    $row = dbFetchOne("SELECT setup_completed FROM system_setup ORDER BY id LIMIT 1");
+    return !empty($row['setup_completed']);
+}
+
 function loginUser(array $user): void
 {
     session_regenerate_id(true);
@@ -191,6 +375,20 @@ function generateEmployeeId(): string
 {
     $count = dbFetchOne("SELECT COUNT(*) c FROM teachers")['c'] ?? 0;
     return 'EMP-' . str_pad($count + 1, 4, '0', STR_PAD_LEFT);
+}
+
+// Matricule generique pour un role sans table de profil dediee
+// (ex : Comptable). Format : PREFIXE-ANNEE-000n, ex COMPT-2026-001.
+function generateStaffNumber(int $roleId): string
+{
+    $prefixes = [ROLE_ACCOUNTANT => 'COMPT'];
+    $prefix   = $prefixes[$roleId] ?? 'STAFF';
+    $year     = date('Y');
+    $count    = dbFetchOne(
+        "SELECT COUNT(*) c FROM users WHERE role_id = ? AND YEAR(created_at) = ?",
+        [$roleId, $year]
+    )['c'] ?? 0;
+    return $prefix . '-' . $year . '-' . str_pad($count + 1, 3, '0', STR_PAD_LEFT);
 }
 
 function generateReceiptNumber(): string

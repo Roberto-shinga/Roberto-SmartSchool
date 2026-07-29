@@ -38,6 +38,7 @@ CREATE TABLE users (
   first_name           VARCHAR(80)       NOT NULL,
   last_name            VARCHAR(80)       NOT NULL,
   phone                VARCHAR(30)       DEFAULT NULL,
+  staff_number         VARCHAR(30)       DEFAULT NULL UNIQUE,
   address              TEXT              DEFAULT NULL,
   gender               ENUM('M','F')     DEFAULT 'M',
   date_of_birth        DATE              DEFAULT NULL,
@@ -618,12 +619,57 @@ CREATE TABLE student_badges (
   CONSTRAINT fk_sb_badge   FOREIGN KEY (badge_id)   REFERENCES badges(id)   ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- ── two_factor_codes (double authentification Super Admin) ──
+CREATE TABLE two_factor_codes (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id     INT UNSIGNED NOT NULL,
+  code_hash   VARCHAR(255) NOT NULL,
+  purpose     VARCHAR(40)  NOT NULL DEFAULT 'login',
+  attempts    TINYINT UNSIGNED NOT NULL DEFAULT 0,
+  used        TINYINT(1)   NOT NULL DEFAULT 0,
+  expires_at  TIMESTAMP    NOT NULL,
+  created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_user_purpose (user_id, purpose, used),
+  CONSTRAINT fk_2fa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ── system_setup (assistant de configuration initiale) ───────
+CREATE TABLE system_setup (
+  id               TINYINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  setup_completed  TINYINT(1)   NOT NULL DEFAULT 0,
+  current_step     TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  completed_at     TIMESTAMP    NULL DEFAULT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB;
+
+INSERT INTO system_setup (setup_completed, current_step) VALUES (0, 1);
+
+-- ── invitations (enseignants, comptables) ────────────────────
+CREATE TABLE invitations (
+  id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id      INT UNSIGNED NOT NULL,
+  role_id      TINYINT UNSIGNED NOT NULL,
+  token_hash   VARCHAR(64)  NOT NULL,
+  invited_by   INT UNSIGNED NOT NULL,
+  status       ENUM('pending','used','expired','cancelled') NOT NULL DEFAULT 'pending',
+  expires_at   TIMESTAMP    NOT NULL,
+  used_at      TIMESTAMP    NULL DEFAULT NULL,
+  cancelled_at TIMESTAMP    NULL DEFAULT NULL,
+  created_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_token (token_hash),
+  KEY idx_user_status (user_id, status),
+  CONSTRAINT fk_inv_user    FOREIGN KEY (user_id)    REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_inv_inviter FOREIGN KEY (invited_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
 -- ── Comptes par defaut ───────────────────────────────────────
 -- Mot de passe : SmartSchool2025!
 INSERT INTO users (role_id, username, email, password, first_name, last_name, phone, must_change_password) VALUES
-  (1, 'superadmin', 'superadmin@smartschool.cd', '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Super',    'Admin',   NULL, 0),
-  (2, 'admin',      'admin@smartschool.cd',       '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Directeur','Kabila',  NULL, 0),
-  (6, 'comptable',  'comptable@smartschool.cd',   '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Paul',     'Mbuyi',   NULL, 0);
+  (1, 'superadmin', 'superadmin@smartschool.cd', '$2y$12$bTsMW.iI0bmVbJCm4Gh3h.5wY/JyfDzfV7LiuQugNArbTSI8A9vQu', 'Super',    'Admin',   NULL, 0),
+  (2, 'admin',      'admin@smartschool.cd',       '$2y$12$bTsMW.iI0bmVbJCm4Gh3h.5wY/JyfDzfV7LiuQugNArbTSI8A9vQu', 'Directeur','Kabila',  NULL, 0),
+  (6, 'comptable',  'comptable@smartschool.cd',   '$2y$12$bTsMW.iI0bmVbJCm4Gh3h.5wY/JyfDzfV7LiuQugNArbTSI8A9vQu', 'Paul',     'Mbuyi',   NULL, 0);
 
 SET FOREIGN_KEY_CHECKS = 1;
 

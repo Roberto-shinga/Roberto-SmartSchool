@@ -14,12 +14,27 @@ $section     = $pageSection ?? '';
 // ── Menus par rôle ──────────────────────────────────────────
 $menus = [];
 
-if (in_array($roleId, [ROLE_SUPER_ADMIN, ROLE_ADMIN])) {
+if ($roleId === ROLE_SUPER_ADMIN) {
+    $menus = [
+        ['section' => 'SUPERVISION'],
+        ['url'=>'/superadmin/index.php',        'icon'=>'bx-home-alt',       'label'=>'Tableau de bord',       'key'=>'dashboard'],
+        ['section' => 'ADMINISTRATION'],
+        ['url'=>'/superadmin/admins.php',       'icon'=>'bx-user-check',     'label'=>'Administrateurs',       'key'=>'admins'],
+        ['url'=>'/superadmin/roles.php',        'icon'=>'bx-key',            'label'=>'Roles & permissions',   'key'=>'roles'],
+        ['section' => 'SECURITE'],
+        ['url'=>'/superadmin/security.php',     'icon'=>'bx-lock-alt',       'label'=>'Parametres de securite','key'=>'security'],
+        ['url'=>'/superadmin/audit-logs.php',   'icon'=>'bx-list-ul',        'label'=>'Journaux d\'audit',      'key'=>'audit-logs'],
+        ['section' => 'SYSTEME'],
+        ['url'=>'/superadmin/backups.php',      'icon'=>'bx-cloud-upload',   'label'=>'Sauvegardes',           'key'=>'backups'],
+        ['url'=>'/superadmin/maintenance.php',  'icon'=>'bx-wrench',         'label'=>'Maintenance',           'key'=>'maintenance'],
+    ];
+} elseif ($roleId === ROLE_ADMIN) {
     $menus = [
         ['section' => 'PRINCIPAL'],
         ['url'=>'/admin/index.php',       'icon'=>'bx-home-alt',      'label'=>'Tableau de bord',  'key'=>'dashboard'],
         ['url'=>'/admin/students.php',    'icon'=>'bx-graduation',    'label'=>'Élèves',           'key'=>'students'],
         ['url'=>'/admin/teachers.php',    'icon'=>'bx-chalkboard',    'label'=>'Enseignants',      'key'=>'teachers'],
+        ['url'=>'/admin/accountants.php', 'icon'=>'bx-calculator',    'label'=>'Comptables',       'key'=>'accountants'],
         ['url'=>'/admin/parents.php',     'icon'=>'bx-group',         'label'=>'Parents',          'key'=>'parents'],
         ['section' => 'SCOLARITE'],
         ['url'=>'/admin/classes.php',     'icon'=>'bx-building',      'label'=>'Classes',          'key'=>'classes'],
@@ -180,8 +195,12 @@ $avatarBg = $roleColors_css[$roleId] ?? 'var(--primary)';
     </button>
 
     <!-- Notifications -->
+    <?php if ($roleId !== ROLE_SUPER_ADMIN): ?>
     <div style="position:relative">
-      <a href="<?= BASE_URL ?>/<?= $roleId <= 2 ? 'admin' : ($roleId == 3 ? 'teachers' : ($roleId == 4 ? 'students' : ($roleId == 5 ? 'parents' : 'accountant'))) ?>/messages.php"
+      <?php
+        $msgBase = $roleId === ROLE_ADMIN ? 'admin' : ($roleId == 3 ? 'teachers' : ($roleId == 4 ? 'students' : ($roleId == 5 ? 'parents' : 'accountant')));
+      ?>
+      <a href="<?= BASE_URL ?>/<?= $msgBase ?>/messages.php"
          class="topbar-icon-btn" title="Messages">
         <i class="bx bx-envelope"></i>
         <?php if ($unreadMsgs > 0): ?>
@@ -189,6 +208,7 @@ $avatarBg = $roleColors_css[$roleId] ?? 'var(--primary)';
         <?php endif; ?>
       </a>
     </div>
+    <?php endif; ?>
 
     <div style="position:relative">
       <a href="#" class="topbar-icon-btn" title="Notifications"
