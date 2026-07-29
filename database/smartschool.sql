@@ -578,8 +578,8 @@ CREATE TABLE quiz_attempts (
   started_at   TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   finished_at  TIMESTAMP    NULL DEFAULT NULL,
   PRIMARY KEY (id),
-  CONSTRAINT fk_att_quiz    FOREIGN KEY (quiz_id)    REFERENCES quizzes(id)  ON DELETE CASCADE,
-  CONSTRAINT fk_att_student FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
+  CONSTRAINT fk_qattempt_quiz    FOREIGN KEY (quiz_id)    REFERENCES quizzes(id)  ON DELETE CASCADE,
+  CONSTRAINT fk_qattempt_student FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE lesson_progress (
@@ -598,7 +598,7 @@ CREATE TABLE badges (
   description TEXT         DEFAULT NULL,
   icon        VARCHAR(50)  DEFAULT 'bx-star',
   color       VARCHAR(7)   DEFAULT '#6366f1',
-  condition   VARCHAR(200) DEFAULT NULL,
+  unlock_condition VARCHAR(200) DEFAULT NULL,
   points      SMALLINT     DEFAULT 10,
   PRIMARY KEY (id)
 ) ENGINE=InnoDB;
