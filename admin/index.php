@@ -292,4 +292,8 @@ require INCLUDES_PATH . '/sidebar.php';
   </div>
 </div>
 
+<<<<<<< HEAD
 <?php require INCLUDES_PATH . '/footer.php'; ?>
+=======
+<?php require INCLUDES_PATH . '/footer.php'; ?>
+>>>>>>> 774e2838f42a360319dead9662c112cbf4c08126
