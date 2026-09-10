@@ -1,0 +1,78 @@
+# ==========================================
+# SmartSchool - Git Ignore
+# ==========================================
+
+# Environnement / secrets
+.env
+.env.*
+!.env.example
+
+# Configuration locale sensible
+config/local.php
+config/*.local.php
+secrets/
+private/
+
+# Base de données locale / dumps
+*.sql
+*.sql.gz
+*.dump
+
+# Logs
+*.log
+logs/
+storage/logs/
+
+# Uploads utilisateurs
+uploads/
+storage/uploads/
+public/uploads/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Système Windows
+Thumbs.db
+Desktop.ini
+
+# IDE / éditeurs
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+
+.idea/
+
+# Node / JavaScript
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build / distribution
+dist/
+build/
+coverage/
+
+# Electron
+release/
+
+# Capacitor
+android/
+ios/
+
+# OS / cache
+.cache/
+.tmp/
+
+# Archives
+*.zip
+*.rar
+*.7z
+
+# XAMPP / serveur local
+xampp/

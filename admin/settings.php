@@ -1,0 +1,266 @@
+<?php
+require_once 'C:/xampp/htdocs/SmartSchool/bootstrap.php';
+requireRole(ROLE_SUPER_ADMIN, ROLE_ADMIN);
+
+$pageTitle   = 'Parametres';
+$pageSection = 'settings';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verifyCsrf();
+    $action = $_POST['action'] ?? '';
+
+    // ── Informations de l'etablissement (table schools) ─────────
+    if ($action === 'save_school') {
+        $schoolId  = (int)($_POST['school_id'] ?? 0);
+        $name      = sanitizeString($_POST['name'] ?? '');
+        $shortName = sanitizeString($_POST['short_name'] ?? '');
+        $address   = sanitizeString($_POST['address'] ?? '');
+        $commune   = sanitizeString($_POST['commune'] ?? '');
+        $city      = sanitizeString($_POST['city'] ?? '');
+        $province  = sanitizeString($_POST['province'] ?? '');
+        $phone     = sanitizeString($_POST['phone'] ?? '');
+        $email     = sanitizeString($_POST['email'] ?? '');
+        $website   = sanitizeString($_POST['website'] ?? '');
+        $schoolType = in_array($_POST['school_type'] ?? '', ['prive','public','conventionne','autre']) ? $_POST['school_type'] : 'prive';
+        $regNumber = sanitizeString($_POST['registration_number'] ?? '');
+        $eduProvince = sanitizeString($_POST['education_province'] ?? '');
+        $subDivision = sanitizeString($_POST['sub_division'] ?? '');
+        $director  = sanitizeString($_POST['director_name'] ?? '');
+
+        if (empty($name)) {
+            redirectWith($_SERVER['PHP_SELF'], 'danger', "Le nom de l'etablissement est obligatoire.");
+        } elseif ($schoolId) {
+            dbExecute(
+                "UPDATE schools SET name=?, short_name=?, address=?, commune=?, city=?, province=?, phone=?, email=?, website=?,
+                                     school_type=?, registration_number=?, education_province=?, sub_division=?, director_name=?
+                 WHERE id=?",
+                [$name, $shortName ?: null, $address ?: null, $commune ?: null, $city ?: null, $province ?: null,
+                 $phone ?: null, $email ?: null, $website ?: null, $schoolType, $regNumber ?: null,
+                 $eduProvince ?: null, $subDivision ?: null, $director ?: null, $schoolId]
+            );
+        } else {
+            dbExecute(
+                "INSERT INTO schools (name, short_name, address, commune, city, province, phone, email, website,
+                                       school_type, registration_number, education_province, sub_division, director_name)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [$name, $shortName ?: null, $address ?: null, $commune ?: null, $city ?: null, $province ?: null,
+                 $phone ?: null, $email ?: null, $website ?: null, $schoolType, $regNumber ?: null,
+                 $eduProvince ?: null, $subDivision ?: null, $director ?: null]
+            );
+        }
+        // On garde school_name synchronise dans system_settings pour tout le
+        // code existant qui l'utilise encore (emails, en-tetes...).
+        setSetting('school_name', $name);
+        logActivity('school_updated', "Informations etablissement mises a jour : $name");
+        redirectWith($_SERVER['PHP_SELF'], 'success', "Informations de l'etablissement mises a jour.");
+    }
+
+    // ── Parametres de notation et devise ─────────────────────────
+    if ($action === 'save_general') {
+        foreach (['school_motto','currency','currency_name'] as $key) {
+            setSetting($key, sanitizeString($_POST[$key] ?? ''));
+        }
+        $maxGrade = max(10, min(100, (int)($_POST['max_grade'] ?? 20)));
+        $passGrade = max(1, min($maxGrade, (int)($_POST['passing_grade'] ?? 10)));
+        setSetting('max_grade', (string)$maxGrade);
+        setSetting('passing_grade', (string)$passGrade);
+        logActivity('settings_updated', 'Parametres de notation mis a jour');
+        redirectWith($_SERVER['PHP_SELF'], 'success', 'Parametres mis a jour.');
+    }
+
+    // ── Annee scolaire ──────────────────────────────────────────
+    if ($action === 'add_year') {
+        $name  = sanitizeString($_POST['name'] ?? '');
+        $start = $_POST['start_date'] ?? '';
+        $end   = $_POST['end_date']   ?? '';
+        if (empty($name) || empty($start) || empty($end)) {
+            redirectWith($_SERVER['PHP_SELF'], 'danger', 'Nom et dates obligatoires.');
+        } elseif (dbFetchOne("SELECT id FROM academic_years WHERE name=?", [$name])) {
+            redirectWith($_SERVER['PHP_SELF'], 'danger', 'Cette annee scolaire existe deja.');
+        } else {
+            dbExecute("INSERT INTO academic_years (name, start_date, end_date, is_current) VALUES (?, ?, ?, 0)", [$name, $start, $end]);
+            logActivity('academic_year_created', $name);
+            redirectWith($_SERVER['PHP_SELF'], 'success', 'Annee scolaire creee.');
+        }
+    }
+
+    if ($action === 'set_current_year') {
+        $id = (int)($_POST['id'] ?? 0);
+        dbExecute("UPDATE academic_years SET is_current=0");
+        dbExecute("UPDATE academic_years SET is_current=1 WHERE id=?", [$id]);
+        logActivity('academic_year_switched', "Annee #$id definie comme courante");
+        redirectWith($_SERVER['PHP_SELF'], 'warning', 'Annee scolaire courante changee. Verifie les classes et affectations associees.');
+    }
+
+    // ── Trimestres ────────────────────────────────────────────
+    if ($action === 'set_current_term') {
+        $id = (int)($_POST['id'] ?? 0);
+        $term = dbFetchOne("SELECT * FROM terms WHERE id=?", [$id]);
+        if ($term) {
+            dbExecute("UPDATE terms SET is_current=0 WHERE academic_year_id=?", [$term['academic_year_id']]);
+            dbExecute("UPDATE terms SET is_current=1 WHERE id=?", [$id]);
+            logActivity('term_switched', "Trimestre #$id defini comme courant");
+            redirectWith($_SERVER['PHP_SELF'], 'success', 'Trimestre courant mis a jour.');
+        }
+    }
+}
+
+$school      = dbFetchOne("SELECT * FROM schools ORDER BY id LIMIT 1") ?: [];
+$currentYear = dbFetchOne("SELECT * FROM academic_years WHERE is_current=1 LIMIT 1");
+$years = dbFetchAll("SELECT * FROM academic_years ORDER BY start_date DESC");
+$terms = $currentYear ? dbFetchAll("SELECT * FROM terms WHERE academic_year_id=? ORDER BY start_date", [$currentYear['id']]) : [];
+
+require INCLUDES_PATH . '/header.php';
+require INCLUDES_PATH . '/sidebar.php';
+?>
+
+<div class="main-content">
+  <div class="page-wrapper">
+
+    <?= showFlash() ?>
+
+    <div class="page-header">
+      <div><h1>Parametres</h1><p>Informations de l'etablissement, annee scolaire et trimestres</p></div>
+    </div>
+
+    <div class="grid-2 mb-6">
+      <div class="card">
+        <div class="card-header"><h3><i class="bx bx-building-house"></i> Informations de l'etablissement</h3></div>
+        <div class="card-body">
+          <form method="POST">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="save_school">
+            <input type="hidden" name="school_id" value="<?= (int)($school['id'] ?? 0) ?>">
+
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Nom de l'etablissement <span class="form-required">*</span></label><input type="text" name="name" class="form-control" value="<?= clean($school['name'] ?? '') ?>" required></div>
+              <div class="form-group"><label class="form-label">Sigle</label><input type="text" name="short_name" class="form-control" maxlength="30" value="<?= clean($school['short_name'] ?? '') ?>"></div>
+            </div>
+            <div class="form-group"><label class="form-label">Adresse</label><input type="text" name="address" class="form-control" value="<?= clean($school['address'] ?? '') ?>"></div>
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Commune</label><input type="text" name="commune" class="form-control" value="<?= clean($school['commune'] ?? '') ?>"></div>
+              <div class="form-group"><label class="form-label">Ville</label><input type="text" name="city" class="form-control" value="<?= clean($school['city'] ?? '') ?>"></div>
+            </div>
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Telephone</label><input type="text" name="phone" class="form-control" value="<?= clean($school['phone'] ?? '') ?>"></div>
+              <div class="form-group"><label class="form-label">Email</label><input type="email" name="email" class="form-control" value="<?= clean($school['email'] ?? '') ?>"></div>
+            </div>
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Site web</label><input type="text" name="website" class="form-control" value="<?= clean($school['website'] ?? '') ?>"></div>
+              <div class="form-group">
+                <label class="form-label">Type d'etablissement</label>
+                <select name="school_type" class="form-control">
+                  <?php foreach (['prive'=>'Prive','public'=>'Public','conventionne'=>'Conventionne','autre'=>'Autre'] as $val => $lbl): ?>
+                    <option value="<?= $val ?>" <?= ($school['school_type'] ?? 'prive') === $val ? 'selected' : '' ?>><?= $lbl ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </div>
+            </div>
+            <div class="form-group"><label class="form-label">Directeur / Chef d'etablissement</label><input type="text" name="director_name" class="form-control" value="<?= clean($school['director_name'] ?? '') ?>"></div>
+
+            <div style="margin:18px 0;padding-top:14px;border-top:1px solid var(--border-light)">
+              <p class="text-xs text-muted" style="margin-bottom:10px">
+                Champs informatifs — SmartSchool ne remplace pas le systeme administratif officiel du Ministere.
+                A valider aupres de l'autorite competente.
+              </p>
+            </div>
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Province</label><input type="text" name="province" class="form-control" value="<?= clean($school['province'] ?? '') ?>"></div>
+              <div class="form-group"><label class="form-label">Province educationnelle</label><input type="text" name="education_province" class="form-control" value="<?= clean($school['education_province'] ?? '') ?>"></div>
+            </div>
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Sous-division</label><input type="text" name="sub_division" class="form-control" value="<?= clean($school['sub_division'] ?? '') ?>"></div>
+              <div class="form-group"><label class="form-label">Numero d'identification</label><input type="text" name="registration_number" class="form-control" value="<?= clean($school['registration_number'] ?? '') ?>"></div>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="margin-top:8px"><i class="bx bx-save"></i> Enregistrer</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:20px">
+        <div class="card-header"><h3><i class="bx bx-calculator"></i> Notation & devise</h3></div>
+        <div class="card-body">
+          <form method="POST">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="save_general">
+            <div class="form-group"><label class="form-label">Devise / slogan de l'ecole</label><input type="text" name="school_motto" class="form-control" value="<?= clean(getSetting('school_motto')) ?>"></div>
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Devise monetaire</label><input type="text" name="currency" class="form-control" maxlength="10" value="<?= clean(getSetting('currency','FC')) ?>"></div>
+              <div class="form-group"><label class="form-label">Nom de la devise</label><input type="text" name="currency_name" class="form-control" value="<?= clean(getSetting('currency_name')) ?>"></div>
+            </div>
+            <div class="grid-2">
+              <div class="form-group"><label class="form-label">Note maximale</label><input type="number" name="max_grade" class="form-control" value="<?= clean(getSetting('max_grade','20')) ?>"></div>
+              <div class="form-group"><label class="form-label">Note de passage</label><input type="number" name="passing_grade" class="form-control" value="<?= clean(getSetting('passing_grade','10')) ?>"></div>
+            </div>
+            <button type="submit" class="btn btn-primary" style="margin-top:8px"><i class="bx bx-save"></i> Enregistrer</button>
+          </form>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:20px">
+        <div class="card">
+          <div class="card-header"><h3><i class="bx bx-calendar"></i> Annee scolaire</h3></div>
+          <div class="card-body">
+            <?php foreach ($years as $y): ?>
+              <div class="flex justify-between items-center" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
+                <div>
+                  <div class="text-sm font-semibold"><?= clean($y['name']) ?></div>
+                  <div class="text-xs text-muted"><?= formatDate($y['start_date']) ?> — <?= formatDate($y['end_date']) ?></div>
+                </div>
+                <?php if ($y['is_current']): ?>
+                  <span class="badge badge-success">Courante</span>
+                <?php else: ?>
+                  <form method="POST" data-confirm="Definir <?= clean($y['name']) ?> comme annee courante ? Cela affecte toutes les pages liees a l'annee active.">
+                    <?= csrfField() ?>
+                    <input type="hidden" name="action" value="set_current_year">
+                    <input type="hidden" name="id" value="<?= $y['id'] ?>">
+                    <button type="submit" class="btn btn-secondary btn-sm">Activer</button>
+                  </form>
+                <?php endif; ?>
+              </div>
+            <?php endforeach; ?>
+
+            <form method="POST" style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+              <?= csrfField() ?>
+              <input type="hidden" name="action" value="add_year">
+              <input type="text" name="name" class="form-control" placeholder="2025-2026" style="flex:1;min-width:100px" required>
+              <input type="date" name="start_date" class="form-control" style="flex:1;min-width:130px" required>
+              <input type="date" name="end_date" class="form-control" style="flex:1;min-width:130px" required>
+              <button type="submit" class="btn btn-primary btn-sm"><i class="bx bx-plus"></i></button>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h3><i class="bx bx-calendar-week"></i> Trimestres (<?= clean($currentYear['name'] ?? '—') ?>)</h3></div>
+          <div class="card-body">
+            <?php if (empty($terms)): ?>
+              <p class="text-sm text-muted">Aucun trimestre defini pour cette annee.</p>
+            <?php else: foreach ($terms as $t): ?>
+              <div class="flex justify-between items-center" style="padding:8px 0;border-bottom:1px solid var(--border-light)">
+                <div>
+                  <div class="text-sm font-semibold"><?= clean($t['name']) ?></div>
+                  <div class="text-xs text-muted"><?= formatDate($t['start_date']) ?> — <?= formatDate($t['end_date']) ?></div>
+                </div>
+                <?php if ($t['is_current']): ?>
+                  <span class="badge badge-success">Courant</span>
+                <?php else: ?>
+                  <form method="POST">
+                    <?= csrfField() ?>
+                    <input type="hidden" name="action" value="set_current_term">
+                    <input type="hidden" name="id" value="<?= $t['id'] ?>">
+                    <button type="submit" class="btn btn-secondary btn-sm">Activer</button>
+                  </form>
+                <?php endif; ?>
+              </div>
+            <?php endforeach; endif; ?>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<?php require INCLUDES_PATH . '/footer.php'; ?>
