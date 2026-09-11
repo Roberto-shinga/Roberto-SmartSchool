@@ -18,6 +18,7 @@ if ($roleId === ROLE_SUPER_ADMIN) {
     $menus = [
         ['section' => 'SUPERVISION'],
         ['url'=>'/superadmin/index.php',        'icon'=>'bx-home-alt',       'label'=>'Tableau de bord',       'key'=>'dashboard'],
+        ['url'=>'/superadmin/setup.php',        'icon'=>'bx-rocket',         'label'=>'Assistant de configuration', 'key'=>'setup'],
         ['section' => 'ADMINISTRATION'],
         ['url'=>'/superadmin/admins.php',       'icon'=>'bx-user-check',     'label'=>'Administrateurs',       'key'=>'admins'],
         ['url'=>'/superadmin/roles.php',        'icon'=>'bx-key',            'label'=>'Roles & permissions',   'key'=>'roles'],
