@@ -1,0 +1,40 @@
+﻿name: SmartSchool PHP Checks
+
+on:
+  push:
+    branches: [ "main", "integration/claude" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  php-lint:
+    name: PHP Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP 8.2
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+
+      - name: Check PHP syntax
+        shell: bash
+        run: |
+          set -e
+          echo "Vérification de la syntaxe PHP..."
+
+          find . -type f -name "*.php" \
+            -not -path "./vendor/*" \
+            -print0 |
+          while IFS= read -r -d '' file; do
+            echo "Checking: $file"
+            php -l "$file"
+          done
+
+          echo "Toutes les vérifications PHP sont terminées."
