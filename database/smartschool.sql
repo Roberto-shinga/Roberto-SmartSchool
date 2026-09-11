@@ -646,6 +646,21 @@ CREATE TABLE system_setup (
 INSERT INTO system_setup (setup_completed, current_step) VALUES (0, 1);
 
 -- ── invitations (enseignants, comptables) ────────────────────
+-- ── password_resets (reinitialisation de mot de passe) ───────
+CREATE TABLE password_resets (
+  id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id     INT UNSIGNED NOT NULL,
+  token_hash  VARCHAR(64)  NOT NULL,
+  status      ENUM('pending','used','expired') NOT NULL DEFAULT 'pending',
+  expires_at  TIMESTAMP    NOT NULL,
+  used_at     TIMESTAMP    NULL DEFAULT NULL,
+  created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_token (token_hash),
+  KEY idx_user_status (user_id, status),
+  CONSTRAINT fk_pwreset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE invitations (
   id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id      INT UNSIGNED NOT NULL,

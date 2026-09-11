@@ -45,14 +45,15 @@ require INCLUDES_PATH . '/sidebar.php';
     </div>
 
     <?php if (!$setupDone): ?>
-    <div class="alert alert-warning" style="margin-bottom:24px">
+    <div class="alert alert-warning" style="margin-bottom:24px;align-items:center">
       <i class="bx bx-error-circle"></i>
-      <div>
+      <div style="flex:1">
         <strong>Configuration initiale non terminee.</strong>
-        L'assistant de configuration (etablissement → creation de l'Administrateur principal → transfert
-        de la gestion quotidienne) n'a pas encore ete complete. Cette etape arrive dans la prochaine phase
-        de developpement.
+        Etablissement, annee scolaire, structure et administrateur principal restent a finaliser.
       </div>
+      <a href="<?= BASE_URL ?>/superadmin/setup.php" class="btn btn-primary btn-sm" style="white-space:nowrap">
+        <i class="bx bx-rocket"></i> Lancer l'assistant
+      </a>
     </div>
     <?php endif; ?>
 
